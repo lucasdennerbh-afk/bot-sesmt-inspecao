@@ -51,15 +51,15 @@ ITENS = [
     {"nome":"ÓCULOS DE SEGURANÇA", "regra":"TODOS", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
     {"nome":"COLETE REFLETIVO", "regra":"TODOS", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
     {"nome":"LUVA DE RASPA", "regra":"TODOS", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"CINTO DE SEGURANÇA", "regra":"TODOS", "tamanho":False, "data_fab":True, "opcoes":["Conforme","Não Aplica"]},
-    {"nome":"TALABARTE DE POSICIONAMENTO", "regra":"TODOS", "tamanho":False, "data_fab":True, "opcoes":["Conforme","Não Aplica"]},
+    {"nome":"CINTO DE SEGURANÇA", "regra":"TODOS", "tamanho":False, "data_fab":True, "validade_anos":5, "opcoes":["Conforme","Não Aplica"]},
+    {"nome":"TALABARTE DE POSICIONAMENTO", "regra":"TODOS", "tamanho":False, "data_fab":True, "validade_anos":5, "opcoes":["Conforme","Não Aplica"]},
     {"nome":"CAPA DE CHUVA", "regra":"TODOS", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
     {"nome":"BOTA DE PVC", "regra":"TODOS", "tamanho":True, "tamanho_tipo":"NUM2", "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
     {"nome":"PERNEIRA", "regra":"TODOS", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
     {"nome":"ESCADA DUPLA", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
     {"nome":"BANDEIROLA", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
     {"nome":"CONES DE SINALIZAÇÃO", "regra":"APENAS MOTORISTA", "tamanho":True, "tamanho_tipo":"QTD", "label_tamanho":"QUANTIDADE", "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"TRAVA QUEDAS", "regra":"TODOS", "tamanho":False, "data_fab":True, "opcoes":["Conforme","Não Conforme"]},
+    {"nome":"TRAVA QUEDAS", "regra":"TODOS", "tamanho":False, "data_fab":True, "validade_anos":5, "opcoes":["Conforme","Não Conforme"]},
     {"nome":"PROTETOR SOLAR", "regra":"TODOS", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
     {"nome":"GARRA MEIO DE VÃO", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
     {"nome":"DETECTOR DE TENSÃO", "regra":"TODOS", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
@@ -70,7 +70,8 @@ ITENS = [
     {"nome":"FITA AMARRAÇÃO ESCADA", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
     {"nome":"FITA DE ANCORAGEM EUREKA", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
     {"nome":"FREIO ABS", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"MOSQUETÃO", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
+    # MOSQUETÃO COM REGRA ESPECIAL 1,2,3
+    {"nome":"MOSQUETÃO", "regra":"APENAS MOTORISTA", "tamanho":True, "tamanho_tipo":"QTD", "label_tamanho":"QUANTIDADE (1, 2 ou 3)", "data_fab":False, "opcoes":["1","2","3"], "auto_mosquetao":True},
     {"nome":"CORREIA PARA ESCADA", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
     {"nome":"CORDIM PARA ESCADA", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
     {"nome":"FITA DE ANCORAGEM 1,5M", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
@@ -146,6 +147,7 @@ ITENS NÃO CONFORME:
         for r in lista_nao_conforme:
             linha = f"- {r['item']}"
             if r.get('tamanho'): linha += f" | TAMANHO: {r['tamanho']}"
+            if r.get('data_fab'): linha += f" | FAB: {r['data_fab']}"
             txt += linha + "\n"
     txt += f"""
 
@@ -158,39 +160,11 @@ DATA: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}
     with open(caminho, "w", encoding="utf-8") as f: f.write(txt)
     return caminho, txt
 
-def gerar_mascara_final_img(dados_colab, resultados, txt_mascara):
-    try:
-        nome_base = f"MASCARA_{dados_colab['chapa']}_{uuid.uuid4().hex[:4]}.png"
-        caminho = os.path.join(PASTA_MASC, nome_base)
-        W, H = 900, 900
-        img = Image.new('RGB', (W, H), (238,238,238))
-        draw = ImageDraw.Draw(img)
-        def bold(x,y,t,c, sz=14):
-            try: f=ImageFont.truetype("DejaVuSans-Bold.ttf", sz)
-            except: f=ImageFont.load_default()
-            draw.text((x,y),t,fill=c,font=f)
-        def normal(x,y,t,c, sz=11):
-            try: f=ImageFont.truetype("DejaVuSans.ttf", sz)
-            except: f=ImageFont.load_default()
-            draw.text((x,y),t,fill=c,font=f)
-        AZUL=(15,76,143)
-        draw.rounded_rectangle([(20,20),(880, H-20)], radius=20, fill=(255,255,255))
-        draw.rounded_rectangle([(150,5),(750,60)], radius=20, fill=AZUL)
-        bold(200,18,"INSPEÇÃO SESMT - MÁSCARA FINAL",(255,255,255),15)
-        bold(40,80,f"CHAPA: {dados_colab['chapa']} | {dados_colab['nome']}",(0,0,0),12)
-        y=160
-        for linha in txt_mascara.split("\n")[:15]:
-            normal(40,y,linha,(0,0,0),9); y+=14
-        img.save(caminho)
-        return caminho
-    except: return ""
-
 app_flask = Flask(__name__)
 @app_flask.route('/')
 def home(): return f"BOT SESMT ON"
 @app_flask.route('/mascaras/<path:filename>')
 def masc(filename): return send_from_directory(PASTA_MASC, filename)
-
 @app_flask.route('/base')
 def base():
     filtro_chapa = request.args.get('chapa','').strip()
@@ -198,13 +172,9 @@ def base():
     html = f"""
     <html><head><meta charset='utf-8'><title>BASE SESMT</title>
     <style>body{{font-family:Arial;padding:15px;background:#f0f2f5}} table{{width:100%;border-collapse:collapse;background:white;font-size:11px}} th,td{{border:1px solid #ddd;padding:6px}} th{{background:#0F4C8F;color:white}} .btn{{padding:5px 10px;border-radius:4px;text-decoration:none;color:white;font-size:11px}} .del{{background:#dc3545}} .view{{background:#0F4C8F}}</style></head><body>
-    <h2>BASE SESMT - INSPEÇÕES</h2>
-    <form method='GET'>
-    CHAPA: <input name='chapa' value='{filtro_chapa}' placeholder='126549'>
-    SUPERVISOR: <input name='supervisor' value='{filtro_sup}' placeholder='LUCAS'>
-    <button>Buscar</button> <a href='/base'>Limpar</a> <a href='/exportar'><button type='button' style='background:green;color:white'>Exportar CSV</button></a> <a href='/pedidos'><button type='button' style='background:orange;color:white'>Máscaras TXT</button></a>
-    </form><br>
-    <table><tr><th>DATA</th><th>CHAPA</th><th>NOME</th><th>TEL</th><th>MOT</th><th>SUPERVISOR</th><th>ITENS</th><th>NÃO CONF</th><th>MÁSCARA</th><th>AÇÃO</th></tr>
+    <h2>BASE SESMT</h2>
+    <form method='GET'>CHAPA: <input name='chapa' value='{filtro_chapa}' placeholder='126549'> SUPERVISOR: <input name='supervisor' value='{filtro_sup}' placeholder='LUCAS'><button>Buscar</button> <a href='/base'>Limpar</a> <a href='/exportar'><button type='button' style='background:green;color:white'>Exportar CSV</button></a> <a href='/pedidos'><button type='button' style='background:orange;color:white'>Máscaras TXT</button></a></form><br>
+    <table><tr><th>DATA</th><th>CHAPA</th><th>NOME</th><th>TEL</th><th>MOT</th><th>SUPERVISOR</th><th>NÃO CONF</th><th>AÇÃO</th></tr>
     """
     try:
         inspecoes={}
@@ -214,22 +184,16 @@ def base():
                 sup = r.get('supervisor','').upper()
                 if filtro_chapa and filtro_chapa.zfill(6) not in ch.zfill(6): continue
                 if filtro_sup and filtro_sup not in sup: continue
-                if ch not in inspecoes: inspecoes[ch]={'data':r.get('data',''),'nome':r.get('nome',''),'telefone':r.get('telefone',''),'eh_motorista':r.get('eh_motorista',''),'supervisor':r.get('supervisor',''),'itens':[],'nao_conf':0}
-                inspecoes[ch]['itens'].append(r)
+                if ch not in inspecoes: inspecoes[ch]={'data':r.get('data',''),'nome':r.get('nome',''),'telefone':r.get('telefone',''),'eh_motorista':r.get('eh_motorista',''),'supervisor':r.get('supervisor',''),'nao_conf':0}
                 if r.get('status')=='Não Conforme': inspecoes[ch]['nao_conf']+=1
         for ch, d in inspecoes.items():
-            masc_path=""
-            for file in sorted(os.listdir(PASTA_MASC), reverse=True):
-                if ch in file and file.endswith('.txt'): masc_path=file; break
-            masc_html = f"<a href='/mascaras/{masc_path}' target=_blank>Ver TXT</a>" if masc_path else "-"
-            html+=f"<tr><td>{d['data']}</td><td><b>{ch}</b></td><td>{d['nome']}</td><td>{d['telefone']}</td><td>{d['eh_motorista']}</td><td>{d['supervisor']}</td><td>{len(d['itens'])}</td><td style='color:red'><b>{d['nao_conf']}</b></td><td>{masc_html}</td><td><a class='btn view' href='/detalhe/{ch}'>Ver</a> <a class='btn del' href='/apagar/{ch}'>Excluir</a></td></tr>"
-    except Exception as e: html+=f"<tr><td colspan=10>{e}</td></tr>"
+            html+=f"<tr><td>{d['data']}</td><td><b>{ch}</b></td><td>{d['nome']}</td><td>{d['telefone']}</td><td>{d['eh_motorista']}</td><td>{d['supervisor']}</td><td style='color:red'><b>{d['nao_conf']}</b></td><td><a class='btn view' href='/detalhe/{ch}'>Ver</a> <a class='btn del' href='/apagar/{ch}'>Excluir</a></td></tr>"
+    except Exception as e: html+=f"<tr><td>{e}</td></tr>"
     html+="</table></body></html>"
     return html
-
 @app_flask.route('/detalhe/<chapa>')
 def detalhe(chapa):
-    html=f"<h2>Detalhe {chapa}</h2><a href='/base'>Voltar</a><br><br><table border=1 cellpadding=6><tr><th>ITEM</th><th>TAM</th><th>FAB</th><th>STATUS</th></tr>"
+    html=f"<h2>Detalhe {chapa}</h2><a href='/base'>Voltar</a><br><table border=1 cellpadding=6><tr><th>ITEM</th><th>QTD/TAM</th><th>FAB</th><th>STATUS</th></tr>"
     try:
         with open(ARQ_INS, encoding="utf-8") as f:
             for r in csv.DictReader(f):
@@ -238,7 +202,6 @@ def detalhe(chapa):
                     html+=f"<tr><td>{r.get('item')}</td><td>{r.get('tamanho')}</td><td>{r.get('data_fab')}</td><td style='color:{cor}'><b>{r.get('status')}</b></td></tr>"
     except: pass
     html+="</table>"
-    # mostra txt
     try:
         for file in os.listdir(PASTA_MASC):
             if chapa in file and file.endswith('.txt'):
@@ -247,7 +210,6 @@ def detalhe(chapa):
                 break
     except: pass
     return html
-
 @app_flask.route('/apagar/<chapa>')
 def apagar(chapa):
     chapa=str(chapa).zfill(6)
@@ -265,10 +227,9 @@ def apagar(chapa):
                 except: pass
     except: pass
     return f"<script>alert('Chapa {chapa} liberada!');window.location='/base';</script>"
-
 @app_flask.route('/pedidos')
 def pedidos():
-    html="<h2>Máscaras TXT - Não Conforme</h2><a href='/base'>Voltar</a><br><br><form>Filtrar Supervisor: <input name='supervisor'><button>Buscar</button></form>"
+    html="<h2>Máscaras TXT - Não Conforme</h2><a href='/base'>Voltar</a><br><br>"
     filtro_sup = request.args.get('supervisor','').upper()
     try:
         for file in sorted(os.listdir(PASTA_MASC), reverse=True):
@@ -288,7 +249,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if os.path.exists(BANNER):
             with open(BANNER, "rb") as photo:
-                await context.bot.send_photo(chat_id=update.effective_chat.id, photo=photo, caption="🦺 *INSPEÇÃO DE SEGURANÇA - OPERACIONAL*\n\n⚠️ Bem-vindo ao sistema oficial de inspeção SESMT!\n🔧 Segurança • Conformidade • Prevenção\n\n👇 Digite sua CHAPA para começar.", parse_mode="Markdown")
+                await context.bot.send_photo(chat_id=update.effective_chat.id, photo=photo, caption="🦺 *INSPEÇÃO DE SEGURANÇA - OPERACIONAL*\n\n⚠️ Bem-vindo ao sistema oficial de inspeção SESMT!\n\n👇 Digite sua CHAPA:", parse_mode="Markdown")
             return CHAPA
     except: pass
     await update.message.reply_text("🦺 *INSPEÇÃO DE SEGURANÇA - OPERACIONAL*\n\nDigite sua CHAPA:", parse_mode="Markdown")
@@ -302,8 +263,8 @@ async def chapa_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Chapa {chapa} não existe. Tente outra:")
         return CHAPA
     if ja_inspecionou(chapa):
-        kb = ReplyKeyboardMarkup([[KeyboardButton("🔄 NOVA INSPEÇÃO - DIGITE /start")]], resize_keyboard=True)
-        await update.message.reply_text(f"⛔ Chapa {chapa} já fez inspeção! Nome: {func['nome']}\nPara liberar: /base > Excluir ou fale com SESMT", reply_markup=kb)
+        kb = ReplyKeyboardMarkup([[KeyboardButton("🔄 NOVA INSPEÇÃO - /start")]], resize_keyboard=True)
+        await update.message.reply_text(f"⛔ Chapa {chapa} já fez inspeção! Nome: {func['nome']}", reply_markup=kb)
         return ConversationHandler.END
     context.user_data['chapa']=chapa; context.user_data['func']=func
     cad=buscar_cadastro(chapa)
@@ -314,7 +275,7 @@ async def chapa_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return EH_MOTORISTA
     else:
         kb=[[KeyboardButton("📱 Compartilhar telefone", request_contact=True)]]
-        await update.message.reply_text(f"✅ {func['nome']}\nPrimeiro cadastro: compartilhe telefone:", reply_markup=ReplyKeyboardMarkup(kb, one_time_keyboard=True, resize_keyboard=True))
+        await update.message.reply_text(f"✅ {func['nome']}\nCompartilhe telefone:", reply_markup=ReplyKeyboardMarkup(kb, one_time_keyboard=True, resize_keyboard=True))
         return TELEFONE
 
 async def telefone_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -322,7 +283,7 @@ async def telefone_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tel=re.sub(r'\D','',str(tel_raw))[-11:]
     context.user_data['telefone']=tel
     kb=[[KeyboardButton("SIM - Sou motorista"), KeyboardButton("NÃO - Não sou motorista")]]
-    await update.message.reply_text(f"Telefone {tel} salvo!\n\nVocê é motorista?", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
+    await update.message.reply_text(f"Telefone {tel} salvo!\nVocê é motorista?", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
     return EH_MOTORISTA
 
 async def motorista_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -335,7 +296,7 @@ async def motorista_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if eh_mot=="SIM": context.user_data['itens_filtrados']=ITENS
     else: context.user_data['itens_filtrados']=[i for i in ITENS if i['regra']=="TODOS"]
     context.user_data['item_idx']=0
-    await update.message.reply_text(f"✅ Motorista: {eh_mot} - Serão {len(context.user_data['itens_filtrados'])} itens!")
+    await update.message.reply_text(f"✅ Motorista: {eh_mot} - {len(context.user_data['itens_filtrados'])} itens")
     return await proximo_item(update, context)
 
 async def proximo_item(update, context):
@@ -343,9 +304,16 @@ async def proximo_item(update, context):
     itens=context.user_data.get('itens_filtrados', ITENS)
     if idx >= len(itens): return await finalizar(update, context)
     item=itens[idx]
-    context.user_data['item_atual']=item; context.user_data['tamanho_atual']=""; context.user_data['data_fab_atual']=""
+    context.user_data['item_atual']=item; context.user_data['tamanho_atual']=""; context.user_data['data_fab_atual']=""; context.user_data['validade_atual']=""
+    
+    # REGRA ESPECIAL MOSQUETÃO
+    if item.get('auto_mosquetao'):
+        kb=[[KeyboardButton("1"), KeyboardButton("2"), KeyboardButton("3")]]
+        await update.message.reply_text(f"🔗 {idx+1}/{len(itens)} - {item['nome']}\n⚠️ REGRA: Quantidade mínima 3!\n\nSelecione quantidade:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
+        return TAMANHO
+
     if item.get('tamanho'):
-        await update.message.reply_text(f"📏 {idx+1}/{len(itens)} - {item['nome']}\nDigite o {item.get('label_tamanho','TAMANHO')}:")
+        await update.message.reply_text(f"📏 {idx+1}/{len(itens)} - {item['nome']}\nDigite {item.get('label_tamanho','TAMANHO')}:")
         return TAMANHO
     if item.get('data_fab'):
         await update.message.reply_text(f"📅 {idx+1}/{len(itens)} - {item['nome']}\nDigite DATA FAB DD/MM/AAAA:")
@@ -356,7 +324,31 @@ async def proximo_item(update, context):
 
 async def tamanho_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     item=context.user_data['item_atual']
-    ok, val = validar_tamanho(update.message.text.strip(), item.get('tamanho_tipo',''))
+    texto = update.message.text.strip()
+    
+    # LÓGICA MOSQUETÃO - AUTO CONFORME/NÃO CONFORME
+    if item.get('auto_mosquetao'):
+        if texto not in ["1","2","3"]:
+            await update.message.reply_text("❌ Selecione apenas 1, 2 ou 3")
+            return TAMANHO
+        qtd = texto
+        if qtd in ["1","2"]:
+            status_auto = "Não Conforme"
+            msg_status = f"🔴 MOSQUETÃO QTD {qtd} - Abaixo do mínimo (3) = AUTOMATICAMENTE NÃO CONFORME!"
+        else:
+            status_auto = "Conforme"
+            msg_status = f"🟢 MOSQUETÃO QTD {qtd} - OK! AUTOMATICAMENTE CONFORME!"
+        
+        res={"item":item['nome'],"tamanho":qtd,"data_fab":"","validade":"","status":status_auto}
+        context.user_data['resultados'].append(res)
+        if status_auto=="Não Conforme":
+            context.user_data['nao_conforme_lista'].append(res)
+        await update.message.reply_text(msg_status)
+        context.user_data['item_idx']+=1
+        return await proximo_item(update, context)
+
+    # LÓGICA NORMAL TAMANHO
+    ok, val = validar_tamanho(texto, item.get('tamanho_tipo',''))
     if not ok:
         await update.message.reply_text(f"❌ {val}")
         return TAMANHO
@@ -371,14 +363,28 @@ async def tamanho_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def data_fab_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto=update.message.text.strip()
     if not re.match(r"\d{2}/\d{2}/\d{4}", texto):
-        await update.message.reply_text("❌ Use DD/MM/AAAA")
+        await update.message.reply_text("❌ Use DD/MM/AAAA ex: 10/05/2023")
         return DATA_FAB
+    
+    item=context.user_data['item_atual']
+    validade, vencido = calcular_validade(texto, item.get('validade_anos',5))
     context.user_data['data_fab_atual']=texto
-    validade, vencido = calcular_validade(texto, 5)
     context.user_data['validade_atual']=validade
-    kb=[[KeyboardButton(o) for o in context.user_data['item_atual']['opcoes']]]
-    await update.message.reply_text(f"Data {texto} Validade: {validade}\nSelecione:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
-    return STATUS
+
+    # REGRA VALIDADE - AUTO NÃO CONFORME SE VENCIDO
+    if vencido:
+        status_auto = "Não Conforme"
+        res={"item":item['nome'],"tamanho":context.user_data.get('tamanho_atual',''),"data_fab":texto,"validade":validade,"status":status_auto}
+        context.user_data['resultados'].append(res)
+        context.user_data['nao_conforme_lista'].append(res)
+        await update.message.reply_text(f"⚠️ ATENÇÃO! DATA FAB {texto} - VENCIDO em {validade}!\n🔴 AUTOMATICAMENTE NÃO CONFORME!")
+        context.user_data['item_idx']+=1
+        return await proximo_item(update, context)
+    else:
+        # NÃO VENCEU - DEIXA COLABORADOR ESCOLHER
+        kb=[[KeyboardButton(o) for o in item['opcoes']]]
+        await update.message.reply_text(f"📅 FAB {texto} - Validade {validade} - Dentro do prazo ✅\nSelecione:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
+        return STATUS
 
 async def status_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status=update.message.text.strip()
@@ -408,9 +414,8 @@ async def finalizar(update, context):
     await update.message.reply_text(msg)
     if os.path.exists(caminho_txt):
         await context.bot.send_document(chat_id=update.effective_chat.id, document=open(caminho_txt, "rb"), filename=os.path.basename(caminho_txt), caption="📄 MÁSCARA TXT")
-    # BOTÃO RESET / NOVA SOLICITAÇÃO
-    kb = ReplyKeyboardMarkup([[KeyboardButton("🔄 NOVA INSPEÇÃO - Clique aqui /start")],[KeyboardButton("/start")]], resize_keyboard=True, one_time_keyboard=False)
-    await update.message.reply_text("👇 Se quiser fazer NOVA solicitação, clique abaixo ou digite /start a qualquer momento:", reply_markup=kb)
+    kb = ReplyKeyboardMarkup([[KeyboardButton("🔄 NOVA INSPEÇÃO - Clique aqui /start")],[KeyboardButton("/start")]], resize_keyboard=True)
+    await update.message.reply_text("👇 Para fazer NOVA solicitação, clique abaixo ou digite /start:", reply_markup=kb)
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
