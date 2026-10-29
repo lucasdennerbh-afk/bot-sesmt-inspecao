@@ -211,6 +211,7 @@ def gerar_excel_completo(caminho="/tmp/sesmt_completo.xlsx", filtro_supervisor="
         resumo_coord.to_excel(writer, sheet_name='POR_GERENTE', index=False)
     return caminho
 
+# === ALTERADO: SÓ SUPERVISOR ===
 def enviar_email_nao_conforme(supervisor_nome, coordenador_nome, chapa, nome_colab, lista_nao_conforme, caminho_txt, dados_colab):
     try:
         import smtplib
@@ -218,24 +219,31 @@ def enviar_email_nao_conforme(supervisor_nome, coordenador_nome, chapa, nome_col
         from email.mime.text import MIMEText
         from email.mime.base import MIMEBase
         from email import encoders
-        emails_destino = []
+        
+        # SÓ SUPERVISOR - NÃO ENVIA MAIS PARA COORDENADOR
         email_sup = EMAILS_SUP.get(supervisor_nome.upper()) if supervisor_nome else None
-        email_coord = EMAILS_SUP.get(coordenador_nome.upper()) if coordenador_nome else None
-        if email_sup: emails_destino.append(email_sup)
-        if email_coord and email_coord not in emails_destino: emails_destino.append(email_coord)
-        if not emails_destino: return False, []
-        EMAIL_USER = os.environ.get("EMAIL_USER", "botsesmt@gmail.com")
-        EMAIL_PASS = os.environ.get("EMAIL_PASS", "tcepcskwinxlfnsk")
-        SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
+        emails_destino = [email_sup] if email_sup else []
+        
+        print(f"TENTANDO ENVIAR SÓ PARA SUPERVISOR: {emails_destino}")
+        
+        if not emails_destino: 
+            print(f"Supervisor {supervisor_nome} sem email cadastrado")
+            return False, []
+            
+        EMAIL_USER = os.environ.get("EMAIL_USER", "").strip() or "botsesmt@gmail.com"
+        EMAIL_PASS = os.environ.get("EMAIL_PASS", "").strip().replace(" ","") or "tcepcskwinxlfnsk"
+        SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com").strip()
         SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+        
         assunto = f"INSPEÇÃO NÃO CONFORME - CHAPA {chapa} - {nome_colab}"
         corpo = f"""Segue os itens não conforme de chapa {chapa} - {nome_colab}
 
 CHAPA: {chapa}
 NOME: {nome_colab}
+CARGO: {dados_colab.get('cargo','')}
 SUPERVISOR: {supervisor_nome}
 COORDENADOR: {coordenador_nome}
-TEL: {dados_colab.get('telefone','')}
+TELEFONE: {dados_colab.get('telefone','')}
 DATA: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}
 
 ITENS NÃO CONFORME ({len(lista_nao_conforme)}):
@@ -243,35 +251,37 @@ ITENS NÃO CONFORME ({len(lista_nao_conforme)}):
         for r in lista_nao_conforme:
             corpo += f"- {r['item']} | TAM: {r.get('tamanho','')} | FAB: {r.get('data_fab','')}\n"
         corpo += "\nMÁSCARA EM ANEXO.\n\nSESMT - Telemont\n"
+        
         msg = MIMEMultipart()
         msg['From'] = EMAIL_USER
         msg['To'] = ", ".join(emails_destino)
         msg['Subject'] = assunto
         msg.attach(MIMEText(corpo, 'plain', 'utf-8'))
+        
         if caminho_txt and os.path.exists(caminho_txt):
-            with open(caminho_txt, "rb") as attachment:
+            with open(caminho_txt, "rb") as f:
                 part = MIMEBase('application', 'octet-stream')
-                part.set_payload(attachment.read())
+                part.set_payload(f.read())
             encoders.encode_base64(part)
-            part.add_header('Content-Disposition', f"attachment; filename= {os.path.basename(caminho_txt)}")
+            part.add_header('Content-Disposition', f"attachment; filename={os.path.basename(caminho_txt)}")
             msg.attach(part)
-        server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
+        
+        server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20)
         server.starttls()
         server.login(EMAIL_USER, EMAIL_PASS)
         server.sendmail(EMAIL_USER, emails_destino, msg.as_string())
         server.quit()
+        print(f"EMAIL ENVIADO COM SUCESSO PARA SUPERVISOR {emails_destino}")
         return True, emails_destino
     except Exception as e:
-        print(f"Erro email: {e}")
+        print(f"Erro email DETALHADO: {e}")
         return False, []
 
 app_flask = Flask(__name__)
 @app_flask.route('/')
 def home(): return f"BOT SESMT ON - <a href='/base'>BASE</a> | <a href='/excel'>EXCEL</a> | <a href='/graficos'>GRAFICOS</a>"
-
 @app_flask.route('/mascaras/<path:filename>')
 def masc(filename): return send_from_directory(PASTA_MASC, filename)
-
 @app_flask.route('/excel')
 def excel_route():
     filtro_sup = request.args.get('supervisor','').strip().upper()
@@ -280,7 +290,6 @@ def excel_route():
     if not caminho or not os.path.exists(caminho): return "Sem dados para este filtro"
     nome = f"SESMT_{filtro_sup or 'TODOS'}_{filtro_ger or 'TODOS'}_{datetime.datetime.now().strftime('%d%m%Y_%H%M')}.xlsx"
     return send_file(caminho, as_attachment=True, download_name=nome)
-
 @app_flask.route('/graficos')
 def graficos():
     filtro_sup = request.args.get('supervisor','').strip().upper()
@@ -505,26 +514,14 @@ async def data_fab_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def status_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto_raw=update.message.text.strip()
     texto = texto_raw.upper()
-    if "NÃO" in texto or "NAO" in texto:
-        status="Não Conforme" if "CONFORME" in texto else "Não Conforme"
-        if "NÃO APLICA" in texto or "NAO APLICA" in texto:
-            status="Não Aplica"
-    elif "CONFORME" in texto:
-        status="Conforme"
-    else:
-        # aceita qualquer coisa pra não travar
-        status="Conforme" if "C" in texto else "Não Conforme"
-        if texto_raw.lower() in ["conforme","não conforme","nao conforme","não aplica","nao aplica","conforme "," conforme"]:
-            status = texto_raw.capitalize() if "Não" not in texto_raw else "Não Conforme"
-
-    # Normalização final
-    if "NÃO CONFORME" in texto or texto.strip().upper() == "NAO CONFORME":
+    if "NÃO CONFORME" in texto or texto.strip().upper() == "NAO CONFORME" or "NAO CONF" in texto:
         status="Não Conforme"
     elif "CONFORME" in texto and "NÃO" not in texto:
         status="Conforme"
     elif "APLICA" in texto:
         status="Não Aplica"
-
+    else:
+        status="Conforme"
     item=context.user_data['item_atual']
     res={"item":item['nome'],"tamanho":context.user_data.get('tamanho_atual',''),"data_fab":context.user_data.get('data_fab_atual',''),"validade":context.user_data.get('validade_atual',''),"status":status}
     context.user_data['resultados'].append(res)
@@ -546,13 +543,13 @@ async def finalizar(update, context):
     if nao_conf:
         enviado, dest = enviar_email_nao_conforme(func['supervisor'], func['coordenador'], chapa, func['nome'], nao_conf, caminho_txt, dados_colab)
     msg=f"✅ FINALIZADA!\n\nCHAPA: {chapa}\nNÃO CONF: {len(nao_conf)}\n\n📋 MÁSCARA:\n{txt_conteudo}"
-    if enviado: msg+=f"\n\n📧 E-mail enviado para: {', '.join(dest)}"
-    elif nao_conf: msg+=f"\n\n⚠️ Email não configurado no Render."
+    if enviado: msg+=f"\n\n📧 E-mail enviado para SUPERVISOR: {', '.join(dest)}"
+    elif nao_conf: msg+=f"\n\n⚠️ Email não enviado - verifique Render."
     await update.message.reply_text(msg)
     if os.path.exists(caminho_txt):
         await context.bot.send_document(chat_id=update.effective_chat.id, document=open(caminho_txt, "rb"), filename=os.path.basename(caminho_txt), caption="📄 MÁSCARA TXT")
     kb = ReplyKeyboardMarkup([[KeyboardButton("🔄 NOVA INSPEÇÃO - /start")]], resize_keyboard=True)
-    await update.message.reply_text("👇 Para nova inspeção clique:", reply_markup=kb)
+    await update.message.reply_text("👇 Para nova inspeção:", reply_markup=kb)
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
