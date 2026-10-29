@@ -284,7 +284,6 @@ def excel_route():
     nome = f"SESMT_{filtro_sup or 'TODOS'}_{filtro_coord or 'TODOS'}_{datetime.datetime.now().strftime('%d%m%Y_%H%M')}.xlsx"
     return send_file(caminho, as_attachment=True, download_name=nome)
 
-# ===== BASE ESTATISTICA COM FILTROS =====
 @app_flask.route('/base')
 def base():
     filtro_sup = request.args.get('supervisor','').strip().upper()
@@ -366,7 +365,7 @@ def base():
                 html += f"<tr><td>{c['chapa']}</td><td>{c['nome']}</td><td>{det.get('data','')}</td><td style='color:red'><b>{det.get('nao_conf',0)}</b></td><td><a class='btn' style='background:#0F4C8F' href='/detalhe/{c['chapa']}'>Ver</a> <a class='btn' style='background:#dc3545' href='/apagar/{c['chapa']}'>Excluir</a></td></tr>"
             html += "</table><br>"
         if just_sup:
-            html += "<h4>📝 JUSTIFICADOS (contam como feito)</h4><table><tr><th>CHAPA</th><th>NOME</th><th>MOTIVO</th><th>DATA</th><th>AÇÃO</th></tr>"
+            html += "<h4>📝 JUSTIFICADOS</h4><table><tr><th>CHAPA</th><th>NOME</th><th>MOTIVO</th><th>DATA</th><th>AÇÃO</th></tr>"
             for c in just_sup:
                 j = justificados.get(c['chapa'],{})
                 html += f"<tr><td>{c['chapa']}</td><td>{c['nome']}</td><td>{j.get('motivo','')}</td><td>{j.get('data','')}</td><td><a class='btn' style='background:#6c757d' href='/remover_just/{c['chapa']}?supervisor={filtro_sup}&coordenador={filtro_coord}'>Remover</a></td></tr>"
@@ -510,7 +509,7 @@ def remover_just(chapa):
     except: pass
     return f"<script>alert('Justificativa removida!');window.location='/base?supervisor={filtro_sup}&coordenador={filtro_coord}';</script>"
 
-# ===== DASHBOARD NAO CONFORME - COM COORDENADOR (ANTES GERENTE) =====
+# ===== DASHBOARD SEM OS 2 GRAFICOS QUE VC MOSTROU NA IMAGEM =====
 @app_flask.route('/graficos')
 def graficos():
     filtro_sup = request.args.get('supervisor','').strip().upper()
@@ -530,23 +529,12 @@ def graficos():
     todos_coord = sorted(COORDENADORES_LISTA)
     options_sup = "".join([f"<option value='{s}' {'selected' if s==filtro_sup else ''}>{s}</option>" for s in todos_sup])
     options_coord = "".join([f"<option value='{c}' {'selected' if c==filtro_coord else ''}>{c}</option>" for c in todos_coord])
-    cont_item = Counter([r.get('item','').strip() for r in df_nc if r.get('item')])
     cont_sup = Counter([r.get('supervisor','').strip() for r in df_nc if r.get('supervisor')])
-    cont_coord = Counter([r.get('coordenador','').strip() for r in df_nc if r.get('coordenador')])
     cont_sup_item = defaultdict(Counter)
     for r in df_nc:
         sup = r.get('supervisor','').strip()
         item = r.get('item','').strip()
         if sup and item: cont_sup_item[sup][item] += 1
-    top_itens = cont_item.most_common(15)
-    labels_itens = [x[0] for x in top_itens]
-    values_itens = [int(x[1]) for x in top_itens]
-    top_sup = cont_sup.most_common(15)
-    labels_sup = [x[0] for x in top_sup]
-    values_sup = [int(x[1]) for x in top_sup]
-    top_coord = cont_coord.most_common(15)
-    labels_coord = [x[0] for x in top_coord]
-    values_coord = [int(x[1]) for x in top_coord]
     tabela_sup = "".join([f"<tr><td><b>{sup}</b></td><td>{EMAILS_SUP.get(sup,'')}</td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for sup,qtd in cont_sup.most_common()])
     tabela_sup_detalhada = "".join([f"<tr><td>{sup}</td><td>{item}</td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for sup, counter in cont_sup_item.items() for item,qtd in counter.most_common()])
     cont_item_tam = defaultdict(Counter)
@@ -556,23 +544,13 @@ def graficos():
     filtro_txt = f"FILTRO: Supervisor={filtro_sup or 'TODOS'} | Coordenador={filtro_coord or 'TODOS'} - Total NC: {len(df_nc)}" if filtro_sup or filtro_coord else f"SEM FILTRO - Total NC: {len(df_nc)}"
     html = f"""
     <html><head><meta charset='utf-8'><title>DASHBOARD NÃO CONFORME</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
-    <style>body{{font-family:Arial;padding:20px;background:#f0f2f5}} .card{{background:white;padding:20px;border-radius:10px;margin-bottom:20px}} h2{{color:#0F4C8F}} table{{border-collapse:collapse;width:100%}} th,td{{border:1px solid #ddd;padding:8px;font-size:13px}} th{{background:#0F4C8F;color:white}} .chart-wrap{{height:400px}} select{{padding:8px;min-width:280px}} .btn{{padding:8px 14px;border-radius:5px;color:white;background:#0F4C8F;text-decoration:none}} .btn-green{{background:green}}</style></head><body>
+    <style>body{{font-family:Arial;padding:20px;background:#f0f2f5}} .card{{background:white;padding:20px;border-radius:10px;margin-bottom:20px}} h2{{color:#0F4C8F}} table{{border-collapse:collapse;width:100%}} th,td{{border:1px solid #ddd;padding:8px;font-size:13px}} th{{background:#0F4C8F;color:white}} select{{padding:8px;min-width:280px}} .btn{{padding:8px 14px;border-radius:5px;color:white;background:#0F4C8F;text-decoration:none}} .btn-green{{background:green}}</style></head><body>
     <h2>📊 DASHBOARD SESMT - ITENS NÃO CONFORME</h2><a href='/base'>BASE ESTATISTICA</a> | <a href='/emails'>EMAILS</a>
     <div class='card' style='background:#e8f0fe;border:2px solid #0F4C8F'>
         <form method='get' style='display:flex;gap:15px;flex-wrap:wrap'><div><b>SUPERVISOR:</b><br><select name='supervisor'><option value=''>-- TODOS SUPERVISORES --</option>{options_sup}</select></div><div><b>COORDENADOR:</b><br><select name='coordenador'><option value=''>-- TODOS COORDENADORES --</option>{options_coord}</select></div><div><br><button class='btn'>🔍 FILTRAR</button> <a href='/graficos' class='btn' style='background:#6c757d'>Limpar</a> <a href='/excel?supervisor={filtro_sup}&coordenador={filtro_coord}' class='btn btn-green'>📥 EXCEL FILTRO</a></div></form><div style='margin-top:10px;color:#0F4C8F;font-weight:bold'>{filtro_txt}</div>
     </div>
-    <div style='display:flex;gap:20px;flex-wrap:wrap'><div class='card' style='flex:2;min-width:500px'><h3>Por Item NÃO CONFORME</h3><div class='chart-wrap'><canvas id='chartItens'></canvas></div></div><div class='card' style='flex:1;min-width:400px'><h3>Por Supervisor</h3><div class='chart-wrap'><canvas id='chartSup'></canvas></div></div><div class='card' style='flex:1;min-width:400px'><h3>Por Coordenador</h3><div class='chart-wrap'><canvas id='chartCoord'></canvas></div></div></div>
     <div style='display:flex;gap:20px;flex-wrap:wrap'><div class='card' style='flex:1'><h3>👷 SOMA POR SUPERVISOR - NÃO CONFORME</h3><table><tr><th>SUPERVISOR</th><th>EMAIL</th><th>QTD NC</th></tr>{tabela_sup}</table><br><table><tr><th>SUP</th><th>ITEM</th><th>QTD</th></tr>{tabela_sup_detalhada}</table></div><div class='card' style='flex:1'><h3>📦 Item + Tamanho NÃO CONFORME</h3><table><tr><th>ITEM</th><th>TAM</th><th>QTD</th></tr>{tabela_item_tamanho}</table></div></div>
-    <script>
-    const labelsItens = {json.dumps(labels_itens)}; const valuesItens = {json.dumps(values_itens)};
-    const labelsSup = {json.dumps(labels_sup)}; const valuesSup = {json.dumps(values_sup)};
-    const labelsCoord = {json.dumps(labels_coord)}; const valuesCoord = {json.dumps(values_coord)};
-    new Chart(document.getElementById('chartItens'), {{type:'bar', data:{{labels:labelsItens, datasets:[{{data:valuesItens, backgroundColor:'#0F4C8F'}}]}}, options:{{indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{{legend:{{display:false}}, datalabels:{{anchor:'end', align:'end', color:'#000', font:{{weight:'bold', size:14}}}} }}, scales:{{x:{{beginAtZero:true}}}} }}, plugins:[ChartDataLabels]}});
-    new Chart(document.getElementById('chartSup'), {{type:'bar', data:{{labels:labelsSup, datasets:[{{data:valuesSup, backgroundColor:'#FFCC00'}}]}}, options:{{indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{{legend:{{display:false}}, datalabels:{{anchor:'end', align:'end', color:'#000', font:{{weight:'bold', size:14}}}} }}, scales:{{x:{{beginAtZero:true}}}} }}, plugins:[ChartDataLabels]}});
-    new Chart(document.getElementById('chartCoord'), {{type:'bar', data:{{labels:labelsCoord, datasets:[{{data:valuesCoord, backgroundColor:'#28a745'}}]}}, options:{{indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{{legend:{{display:false}}, datalabels:{{anchor:'end', align:'end', color:'#000', font:{{weight:'bold', size:14}}}} }}, scales:{{x:{{beginAtZero:true}}}} }}, plugins:[ChartDataLabels]}});
-    </script></body></html>"""
+    </body></html>"""
     return html
 
 @app_flask.route('/emails')
