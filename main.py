@@ -1,9 +1,8 @@
-import os, threading, csv, datetime, re, uuid, json
+import os, threading, csv, datetime, re, uuid, json, unicodedata
 from collections import Counter, defaultdict
 from flask import Flask, send_from_directory, request, send_file
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, ConversationHandler, filters, ContextTypes
-from PIL import Image, ImageDraw, ImageFont
 
 TOKEN = os.environ.get("BOT_TOKEN")
 ARQ_FUNC = "funcionarios.csv"
@@ -12,11 +11,27 @@ ARQ_INS = "inspecoes.csv"
 ARQ_PEDIDOS = "pedidos_mascaras.csv"
 PASTA_MASC = "mascaras"
 BANNER = "banner.jpg"
+ARQ_SUP_EMAIL = "supervisores.csv"
 os.makedirs(PASTA_MASC, exist_ok=True)
 
 FUNCIONARIOS = {}
+SUPERVISORES_LISTA = set()
+COORDENADORES_LISTA = set()
+
+def remover_acentos(texto):
+    return ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn')
+
+def gerar_email_telemont(nome_completo):
+    nome = remover_acentos(nome_completo.upper())
+    partes = [p for p in nome.split() if p not in ["DE","DA","DO","DOS","DAS","E"]]
+    if len(partes) == 1:
+        return f"{partes[0].lower()}@telemont.com.br"
+    primeiro = partes[0].lower()
+    ultimo = partes[-1].lower()
+    return f"{primeiro}.{ultimo}@telemont.com.br"
+
 def carregar_funcionarios():
-    global FUNCIONARIOS
+    global FUNCIONARIOS, SUPERVISORES_LISTA, COORDENADORES_LISTA
     try:
         with open(ARQ_FUNC, encoding="utf-8-sig") as f:
             primeira = f.readline()
@@ -35,11 +50,33 @@ def carregar_funcionarios():
                     chapa_raw = str(r.get(ch_col,"")).strip()
                     if not chapa_raw: continue
                     chapa_6 = chapa_raw.zfill(6)
-                    FUNCIONARIOS[chapa_6] = {"nome": str(r.get(nome_col,"")).strip().upper(),"cargo": str(r.get(cargo_col,"")).strip().upper(),"admissao": str(r.get(adm_col,"")).strip(),"supervisor": str(r.get(sup_col,"")).strip().upper(),"coordenador": str(r.get(coord_col,"")).strip().upper()}
+                    nome_sup = str(r.get(sup_col,"")).strip().upper()
+                    nome_coord = str(r.get(coord_col,"")).strip().upper()
+                    if nome_sup: SUPERVISORES_LISTA.add(nome_sup)
+                    if nome_coord: COORDENADORES_LISTA.add(nome_coord)
+                    FUNCIONARIOS[chapa_6] = {"nome": str(r.get(nome_col,"")).strip().upper(),"cargo": str(r.get(cargo_col,"")).strip().upper(),"admissao": str(r.get(adm_col,"")).strip(),"supervisor": nome_sup,"coordenador": nome_coord}
                     FUNCIONARIOS[chapa_raw] = FUNCIONARIOS[chapa_6]
                 except: continue
     except: pass
 carregar_funcionarios()
+
+EMAILS_SUP = {}
+def carregar_emails_sup():
+    global EMAILS_SUP
+    for sup in SUPERVISORES_LISTA:
+        if sup: EMAILS_SUP[sup] = gerar_email_telemont(sup)
+    for coord in COORDENADORES_LISTA:
+        if coord: EMAILS_SUP[coord] = gerar_email_telemont(coord)
+    try:
+        with open(ARQ_SUP_EMAIL, encoding="utf-8-sig") as f:
+            reader = csv.DictReader(f)
+            for r in reader:
+                sup = str(r.get('supervisor','')).strip().upper()
+                email = str(r.get('email','')).strip()
+                if sup and email:
+                    EMAILS_SUP[sup] = email
+    except: pass
+carregar_emails_sup()
 
 for arq, head in [(ARQ_CAD, ["chapa","nome","cargo","data_admissao","supervisor","coordenador","telefone","id_telegram","eh_motorista"]), (ARQ_INS, ["data","chapa","nome","cargo","supervisor","coordenador","telefone","eh_motorista","item","tamanho","data_fab","validade","status"]), (ARQ_PEDIDOS, ["data","chapa","nome","telefone","supervisor","mascara_txt"])]:
     if not os.path.exists(arq):
@@ -130,12 +167,14 @@ def calcular_validade(data_str, anos=5):
         venc = dt + datetime.timedelta(days=anos*365)
         return venc.strftime("%d/%m/%Y"), venc < datetime.datetime.now()
     except: return "", False
+
 def gerar_mascara_txt(dados_colab, lista_nao_conforme):
     txt = f"""PEDIDO DE EPI - NÃO CONFORME
 CHAPA: {dados_colab['chapa']}
 NOME: {dados_colab['nome']}
 TEL: {dados_colab['telefone']}
 SUPERVISOR: {dados_colab['supervisor']}
+COORDENADOR: {dados_colab.get('coordenador','')}
 DATA: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}
 
 ITENS NÃO CONFORME:
@@ -152,60 +191,102 @@ ITENS NÃO CONFORME:
 def gerar_excel_completo(caminho="/tmp/sesmt_completo.xlsx"):
     try:
         import pandas as pd
-    except:
-        return None
+    except: return None
     linhas=[]
     try:
         with open(ARQ_INS, encoding="utf-8") as f:
-            for r in csv.DictReader(f):
-                linhas.append(r)
+            for r in csv.DictReader(f): linhas.append(r)
     except: linhas=[]
-    if not linhas:
-        return None
+    if not linhas: return None
     df = pd.DataFrame(linhas)
     df_nc = df[df['status']=='Não Conforme']
-    resumo = df_nc.groupby('item').size().reset_index(name='QTD_NAO_CONFORME')
-    resumo = resumo.sort_values('QTD_NAO_CONFORME', ascending=False)
-    def extrair_tamanho_qtd(valor):
-        tamanho=""
-        quantidade=""
-        tipo_veiculo=""
-        if not valor: return tamanho, quantidade, tipo_veiculo
-        v=str(valor).upper()
-        import re
-        nums=re.findall(r'\d+', v)
-        if "QTD" in v and nums:
-            quantidade=nums[0]
-            tamanho=valor
-        elif "UTILIT" in v or "PASSEIO" in v:
-            tipo_veiculo="Utilitário" if "UTILIT" in v else "Passeio"
-            if nums: quantidade=nums[0]
-            tamanho=valor
-        else:
-            tamanho=valor
-            if nums: quantidade=nums[0] if "QTD" not in v else nums[0]
-        return tamanho, quantidade, tipo_veiculo
-    df_tam = df.copy()
-    df_tam[['TAMANHO_COL','QUANTIDADE_COL','TIPO_VEICULO']] = df_tam['tamanho'].apply(lambda x: pd.Series(extrair_tamanho_qtd(x)))
+    resumo = df_nc.groupby('item').size().reset_index(name='QTD_NAO_CONFORME').sort_values('QTD_NAO_CONFORME', ascending=False)
     resumo_sup = df_nc.groupby(['supervisor','item']).size().reset_index(name='QTD')
+    resumo_coord = df_nc.groupby(['coordenador','item']).size().reset_index(name='QTD')
     with pd.ExcelWriter(caminho, engine='openpyxl') as writer:
         resumo.to_excel(writer, sheet_name='RESUMO_NAO_CONFORME', index=False)
         df.to_excel(writer, sheet_name='DETALHADO_COMPLETO', index=False)
-        df_tam.to_excel(writer, sheet_name='TAMANHOS_SEPARADOS', index=False)
         resumo_sup.to_excel(writer, sheet_name='POR_SUPERVISOR', index=False)
+        resumo_coord.to_excel(writer, sheet_name='POR_COORDENADOR', index=False)
         df_nc.to_excel(writer, sheet_name='SO_NAO_CONFORME', index=False)
+        pd.DataFrame([{"supervisor":k, "email":v} for k,v in EMAILS_SUP.items()]).to_excel(writer, sheet_name='EMAILS_SUPERVISORES', index=False)
     return caminho
+
+def enviar_email_nao_conforme(supervisor_nome, coordenador_nome, chapa, nome_colab, lista_nao_conforme, caminho_txt, dados_colab):
+    try:
+        import smtplib
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
+        from email.mime.base import MIMEBase
+        from email import encoders
+
+        emails_destino = []
+        email_sup = EMAILS_SUP.get(supervisor_nome.upper()) if supervisor_nome else None
+        email_coord = EMAILS_SUP.get(coordenador_nome.upper()) if coordenador_nome else None
+        if email_sup: emails_destino.append(email_sup)
+        if email_coord and email_coord not in emails_destino: emails_destino.append(email_coord)
+
+        if not emails_destino:
+            return False, []
+
+        EMAIL_USER = os.environ.get("EMAIL_USER")
+        EMAIL_PASS = os.environ.get("EMAIL_PASS")
+        SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.office365.com")
+        SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+
+        if not EMAIL_USER or not EMAIL_PASS:
+            return False, []
+
+        assunto = f"INSPEÇÃO NÃO CONFORME - CHAPA {chapa} - {nome_colab}"
+        corpo = f"""Segue os itens não conforme de chapa {chapa} - {nome_colab}
+
+CHAPA: {chapa}
+NOME: {nome_colab}
+CARGO: {dados_colab.get('cargo','')}
+SUPERVISOR: {supervisor_nome}
+COORDENADOR: {coordenador_nome}
+TELEFONE: {dados_colab.get('telefone','')}
+DATA: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}
+
+ITENS NÃO CONFORME ({len(lista_nao_conforme)}):
+"""
+        for r in lista_nao_conforme:
+            corpo += f"- {r['item']} | TAM: {r.get('tamanho','')} | FAB: {r.get('data_fab','')}\n"
+        corpo += "\nMÁSCARA COMPLETA EM ANEXO.\n\nSESMT - Telemont\n"
+
+        msg = MIMEMultipart()
+        msg['From'] = EMAIL_USER
+        msg['To'] = ", ".join(emails_destino)
+        msg['Subject'] = assunto
+        msg.attach(MIMEText(corpo, 'plain', 'utf-8'))
+
+        if caminho_txt and os.path.exists(caminho_txt):
+            with open(caminho_txt, "rb") as attachment:
+                part = MIMEBase('application', 'octet-stream')
+                part.set_payload(attachment.read())
+            encoders.encode_base64(part)
+            part.add_header('Content-Disposition', f"attachment; filename= {os.path.basename(caminho_txt)}")
+            msg.attach(part)
+
+        server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
+        server.starttls()
+        server.login(EMAIL_USER, EMAIL_PASS)
+        server.sendmail(EMAIL_USER, emails_destino, msg.as_string())
+        server.quit()
+        return True, emails_destino
+    except Exception as e:
+        print(f"Erro email: {e}")
+        return False, []
 
 app_flask = Flask(__name__)
 @app_flask.route('/')
-def home(): return "BOT SESMT ON - <a href='/base'>BASE</a> | <a href='/excel'>EXCEL COMPLETO</a> | <a href='/graficos'>GRAFICOS</a>"
+def home(): return f"BOT SESMT ON - <a href='/base'>BASE</a> | <a href='/excel'>EXCEL</a> | <a href='/graficos'>GRAFICOS</a> | Emails: {len(EMAILS_SUP)}"
 @app_flask.route('/mascaras/<path:filename>')
 def masc(filename): return send_from_directory(PASTA_MASC, filename)
 @app_flask.route('/excel')
 def excel_route():
     caminho = gerar_excel_completo()
-    if not caminho or not os.path.exists(caminho):
-        return "Sem dados ainda ou falta biblioteca openpyxl/pandas no requirements.txt"
+    if not caminho or not os.path.exists(caminho): return "Sem dados ou falta openpyxl/pandas"
     return send_file(caminho, as_attachment=True, download_name=f"SESMT_COMPLETO_{datetime.datetime.now().strftime('%d%m%Y_%H%M')}.xlsx")
 
 @app_flask.route('/graficos')
@@ -216,98 +297,162 @@ def graficos():
             for r in csv.DictReader(f):
                 linhas.append(r)
     except: linhas=[]
-    df_nc = [r for r in linhas if r.get('status')=='Não Conforme']
-    cont_item = Counter([r.get('item','') for r in df_nc])
-    cont_sup = Counter([r.get('supervisor','') for r in df_nc])
     
-    cont_tamanho = Counter()
-    cont_item_tamanho = defaultdict(Counter)
+    df_nc = [r for r in linhas if str(r.get('status','')).strip() == 'Não Conforme']
+    
+    cont_item = Counter([r.get('item','').strip() for r in df_nc if r.get('item')])
+    cont_sup = Counter([r.get('supervisor','').strip() for r in df_nc if r.get('supervisor')])
     cont_sup_item = defaultdict(Counter)
+    
     for r in df_nc:
-        tam = r.get('tamanho','').strip().upper()
-        item = r.get('item','')
-        sup = r.get('supervisor','')
-        if tam and tam != "":
-            cont_tamanho[tam] += 1
-            cont_item_tamanho[item][tam] += 1
-        if sup:
+        sup = r.get('supervisor','').strip()
+        item = r.get('item','').strip()
+        if sup and item:
             cont_sup_item[sup][item] += 1
 
     top_itens = cont_item.most_common(15)
     labels_itens = [x[0] for x in top_itens]
-    values_itens = [x[1] for x in top_itens]
+    values_itens = [int(x[1]) for x in top_itens]
+
     top_sup = cont_sup.most_common(15)
     labels_sup = [x[0] for x in top_sup]
-    values_sup = [x[1] for x in top_sup]
+    values_sup = [int(x[1]) for x in top_sup]
 
-    tabela_tamanhos = "".join([f"<tr><td><b>{tam}</b></td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for tam,qtd in cont_tamanho.most_common()])
-    tabela_item_tamanho = "".join([f"<tr><td>{item}</td><td><b>{tam}</b></td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for item, counter in cont_item_tamanho.items() for tam,qtd in counter.most_common()])
-    tabela_sup = "".join([f"<tr><td><b>{sup}</b></td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for sup,qtd in cont_sup.most_common()])
+    tabela_sup = "".join([f"<tr><td><b>{sup}</b></td><td>{EMAILS_SUP.get(sup,'')}</td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for sup,qtd in cont_sup.most_common()])
     tabela_sup_detalhada = "".join([f"<tr><td>{sup}</td><td>{item}</td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for sup, counter in cont_sup_item.items() for item,qtd in counter.most_common()])
+
+    cont_item_tam = defaultdict(Counter)
+    for r in df_nc:
+        cont_item_tam[r.get('item','')][r.get('tamanho','')] += 1
+    tabela_item_tamanho = "".join([f"<tr><td>{item}</td><td><b>{tam}</b></td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for item, c in cont_item_tam.items() for tam,qtd in c.most_common() if tam])
 
     html = f"""
     <html><head><meta charset='utf-8'><title>GRÁFICOS SESMT</title>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
-    <style>body{{font-family:Arial;padding:20px;background:#f0f2f5}} .card{{background:white;padding:20px;border-radius:10px;margin-bottom:20px;box-shadow:0 2px 5px #ccc}} h2{{color:#0F4C8F}} table{{border-collapse:collapse;width:100%}} th,td{{border:1px solid #ddd;padding:8px;font-size:13px}} th{{background:#0F4C8F;color:white}}</style></head><body>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+    <style>
+    body{{font-family:Arial;padding:20px;background:#f0f2f5}} 
+    .card{{background:white;padding:20px;border-radius:10px;margin-bottom:20px;box-shadow:0 2px 5px #ccc}} 
+    h2{{color:#0F4C8F}} 
+    table{{border-collapse:collapse;width:100%}} th,td{{border:1px solid #ddd;padding:8px;font-size:13px}} th{{background:#0F4C8F;color:white}}
+    .chart-wrap{{position:relative;height:400px}}
+    </style></head><body>
     <h2>📊 DASHBOARD SESMT - NÃO CONFORME</h2>
-    <a href='/base'>BASE</a> | <a href='/excel'>BAIXAR EXCEL</a> | <a href='/graficos'>ATUALIZAR</a>
+    <a href='/base'>BASE</a> | <a href='/excel'>BAIXAR EXCEL</a> | <a href='/graficos'>ATUALIZAR</a> | <a href='/emails'>VER EMAILS</a>
+    
     <div style='display:flex;gap:20px;flex-wrap:wrap;margin-top:20px'>
-    <div class='card' style='flex:2;min-width:400px'><h3>Total Não Conforme por Item (Top 15)</h3><canvas id='chartItens'></canvas></div>
-    <div class='card' style='flex:1;min-width:400px'><h3>Total Não Conforme por Supervisor</h3><canvas id='chartSup'></canvas></div>
+      <div class='card' style='flex:2;min-width:500px'>
+        <h3>Total Não Conforme por Item (Top 15)</h3>
+        <div class='chart-wrap'><canvas id='chartItens'></canvas></div>
+      </div>
+      <div class='card' style='flex:1;min-width:400px'>
+        <h3>Total Não Conforme por Supervisor</h3>
+        <div class='chart-wrap'><canvas id='chartSup'></canvas></div>
+      </div>
     </div>
+
     <div style='display:flex;gap:20px;flex-wrap:wrap'>
-    <div class='card' style='flex:1;min-width:300px'><h3>📏 SOMA POR TAMANHO - SÓ NÃO CONFORME (GG 2, 40 5)</h3>
-    <table><tr><th>TAMANHO</th><th>QTD</th></tr>{tabela_tamanhos or "<tr><td colspan=2>Nenhum</td></tr>"}</table></div>
-    <div class='card' style='flex:1;min-width:320px'><h3>👷 SOMA POR SUPERVISOR</h3>
-    <table><tr><th>SUPERVISOR</th><th>QTD NÃO CONFORME</th></tr>{tabela_sup or "<tr><td colspan=2>Nenhum</td></tr>"}</table><br>
-    <h4>Detalhado: Supervisor x Item</h4>
-    <table><tr><th>SUPERVISOR</th><th>ITEM</th><th>QTD</th></tr>{tabela_sup_detalhada or "<tr><td colspan=3>Nenhum</td></tr>"}</table>
+      <div class='card' style='flex:1;min-width:380px'>
+        <h3>👷 SOMA POR SUPERVISOR</h3>
+        <table><tr><th>SUPERVISOR</th><th>EMAIL</th><th>QTD NÃO CONFORME</th></tr>
+        {tabela_sup or "<tr><td colspan=3>Nenhum dado</td></tr>"}
+        </table><br>
+        <h4>Detalhado: Supervisor x Item</h4>
+        <table><tr><th>SUPERVISOR</th><th>ITEM</th><th>QTD</th></tr>
+        {tabela_sup_detalhada or "<tr><td colspan=3>Nenhum</td></tr>"}
+        </table>
+      </div>
+      <div class='card' style='flex:1;min-width:400px'>
+        <h3>📦 Item + Tamanho Não Conforme</h3>
+        <table><tr><th>ITEM</th><th>TAMANHO</th><th>QTD</th></tr>
+        {tabela_item_tamanho or "<tr><td colspan=3>Nenhum</td></tr>"}
+        </table>
+      </div>
     </div>
-    <div class='card' style='flex:1;min-width:400px'><h3>📦 Item + Tamanho Não Conforme</h3>
-    <table><tr><th>ITEM</th><th>TAMANHO</th><th>QTD</th></tr>{tabela_item_tamanho or "<tr><td colspan=3>Nenhum</td></tr>"}</table></div>
-    </div>
-    <div class='card'><h3>Resumo por Item</h3>
-    <p>Total registros: {len(linhas)} | Total Não Conforme: {len(df_nc)}</p>
-    <table><tr><th>Item</th><th>Qtd Não Conforme</th></tr>{''.join([f"<tr><td>{k}</td><td><b>{v}</b></td></tr>" for k,v in cont_item.most_common()])}</table>
-    </div>
+
     <script>
-    Chart.register(ChartDataLabels);
-    const ctx1 = document.getElementById('chartItens').getContext('2d');
-    new Chart(ctx1, {{
-        type:'bar',
-        data:{{labels:{json.dumps(labels_itens)}, datasets:[{{label:'Qtd Não Conforme', data:{json.dumps(values_itens)}, backgroundColor:'#0F4C8F'}}]}},
-        options:{{
-            indexAxis:'y',
-            plugins:{{
-                datalabels:{{anchor:'end', align:'right', color:'#000', font:{{weight:'bold', size:13}}, formatter: (value) => value}},
-                legend:{{display:false}}
+    const labelsItens = {json.dumps(labels_itens)};
+    const valuesItens = {json.dumps(values_itens)};
+    const labelsSup = {json.dumps(labels_sup)};
+    const valuesSup = {json.dumps(values_sup)};
+
+    new Chart(document.getElementById('chartItens'), {{
+        type: 'bar',
+        data: {{
+            labels: labelsItens,
+            datasets: [{{
+                label: 'Qtd Não Conforme',
+                data: valuesItens,
+                backgroundColor: '#0F4C8F',
+                borderWidth: 1
+            }}]
+        }},
+        options: {{
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {{
+                legend: {{display:false}},
+                datalabels: {{
+                    anchor: 'end',
+                    align: 'end',
+                    color: '#000',
+                    font: {{weight: 'bold', size: 14}},
+                    formatter: (v) => v
+                }}
             }},
-            scales:{{x:{{beginAtZero:true, ticks:{{stepSize:1}}}}}}
+            scales: {{x: {{beginAtZero:true, ticks:{{stepSize:1, precision:0}}}}}}
+        }},
+        plugins: [ChartDataLabels]
     }});
-    const ctx2 = document.getElementById('chartSup').getContext('2d');
-    new Chart(ctx2, {{
-        type:'bar',
-        data:{{labels:{json.dumps(labels_sup)}, datasets:[{{label:'Qtd Não Conforme', data:{json.dumps(values_sup)}, backgroundColor:'#FFCC00'}}]}},
-        options:{{
-            indexAxis:'y',
-            plugins:{{
-                datalabels:{{anchor:'end', align:'right', color:'#000', font:{{weight:'bold', size:13}}, formatter: (value) => value}},
-                legend:{{display:false}}
+
+    new Chart(document.getElementById('chartSup'), {{
+        type: 'bar',
+        data: {{
+            labels: labelsSup,
+            datasets: [{{
+                label: 'Qtd Não Conforme',
+                data: valuesSup,
+                backgroundColor: '#FFCC00',
+                borderWidth: 1
+            }}]
+        }},
+        options: {{
+            indexAxis: 'y',
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {{
+                legend: {{display:false}},
+                datalabels: {{
+                    anchor: 'end',
+                    align: 'end',
+                    color: '#000',
+                    font: {{weight: 'bold', size: 14}},
+                    formatter: (v) => v
+                }}
             }},
-            scales:{{x:{{beginAtZero:true, ticks:{{stepSize:1}}}}}}
-        }}
+            scales: {{x: {{beginAtZero:true, ticks:{{stepSize:1, precision:0}}}}}}
+        }},
+        plugins: [ChartDataLabels]
     }});
     </script>
     </body></html>
     """
     return html
 
+@app_flask.route('/emails')
+def ver_emails():
+    html="<h2>Emails Gerados Automaticamente da Base funcionarios.csv</h2><a href='/graficos'>Voltar</a><br><br><table border=1 cellpadding=8><tr><th>SUPERVISOR / COORDENADOR</th><th>EMAIL GERADO</th></tr>"
+    for nome,email in sorted(EMAILS_SUP.items()):
+        html+=f"<tr><td>{nome}</td><td>{email}</td></tr>"
+    html+="</table><br><p>Para corrigir algum email, crie o arquivo supervisores.csv com supervisor,email</p>"
+    return html
+
 @app_flask.route('/base')
 def base():
     filtro_chapa = request.args.get('chapa','').strip()
     filtro_sup = request.args.get('supervisor','').strip().upper()
-    html = f"<html><head><meta charset='utf-8'><title>BASE SESMT</title><style>body{{font-family:Arial;padding:15px;background:#f0f2f5}} table{{width:100%;border-collapse:collapse;background:white;font-size:11px}} th,td{{border:1px solid #ddd;padding:6px}} th{{background:#0F4C8F;color:white}} .btn{{padding:5px 10px;border-radius:4px;text-decoration:none;color:white;font-size:11px}} .del{{background:#dc3545}} .view{{background:#0F4C8F}} .excel{{background:green}} .graf{{background:#fd7e14}}</style></head><body><h2>BASE SESMT</h2><a class='btn excel' href='/excel'>📥 BAIXAR EXCEL COMPLETO (com abas)</a> <a class='btn graf' href='/graficos'>📊 VER GRÁFICOS</a><br><br><form>CHAPA: <input name='chapa' value='{filtro_chapa}'> SUPERVISOR: <input name='supervisor' value='{filtro_sup}'><button>Buscar</button> <a href='/base'>Limpar</a> <a href='/exportar'>CSV Simples</a></form><br><table><tr><th>DATA</th><th>CHAPA</th><th>NOME</th><th>SUPERVISOR</th><th>NÃO CONF</th><th>AÇÃO</th></tr>"
+    html = f"<html><head><meta charset='utf-8'><title>BASE SESMT</title><style>body{{font-family:Arial;padding:15px;background:#f0f2f5}} table{{width:100%;border-collapse:collapse;background:white;font-size:11px}} th,td{{border:1px solid #ddd;padding:6px}} th{{background:#0F4C8F;color:white}} .btn{{padding:5px 10px;border-radius:4px;text-decoration:none;color:white;font-size:11px}} .del{{background:#dc3545}} .view{{background:#0F4C8F}} .excel{{background:green}} .graf{{background:#fd7e14}}</style></head><body><h2>BASE SESMT</h2><a class='btn excel' href='/excel'>📥 EXCEL</a> <a class='btn graf' href='/graficos'>📊 GRÁFICOS</a> <a class='btn' style='background:#17a2b8' href='/emails'>📧 EMAILS</a><br><br><form>CHAPA: <input name='chapa' value='{filtro_chapa}'> SUPERVISOR: <input name='supervisor' value='{filtro_sup}'><button>Buscar</button> <a href='/base'>Limpar</a> <a href='/exportar'>CSV</a></form><br><table><tr><th>DATA</th><th>CHAPA</th><th>NOME</th><th>SUPERVISOR</th><th>COORD</th><th>NÃO CONF</th><th>AÇÃO</th></tr>"
     try:
         inspecoes={}
         with open(ARQ_INS, encoding="utf-8") as f:
@@ -315,35 +460,29 @@ def base():
                 ch = r.get('chapa',''); sup = r.get('supervisor','').upper()
                 if filtro_chapa and filtro_chapa.zfill(6) not in ch.zfill(6): continue
                 if filtro_sup and filtro_sup not in sup: continue
-                if ch not in inspecoes: inspecoes[ch]={'data':r.get('data',''),'nome':r.get('nome',''),'supervisor':r.get('supervisor',''),'nao_conf':0}
+                if ch not in inspecoes: inspecoes[ch]={'data':r.get('data',''),'nome':r.get('nome',''),'supervisor':r.get('supervisor',''),'coordenador':r.get('coordenador',''),'nao_conf':0}
                 if r.get('status')=='Não Conforme': inspecoes[ch]['nao_conf']+=1
         for ch, d in inspecoes.items():
-            html+=f"<tr><td>{d['data']}</td><td><b>{ch}</b></td><td>{d['nome']}</td><td>{d['supervisor']}</td><td style='color:red'><b>{d['nao_conf']}</b></td><td><a class='btn view' href='/detalhe/{ch}'>Ver</a> <a class='btn del' href='/apagar/{ch}'>Excluir</a></td></tr>"
+            html+=f"<tr><td>{d['data']}</td><td><b>{ch}</b></td><td>{d['nome']}</td><td>{d['supervisor']}</td><td>{d['coordenador']}</td><td style='color:red'><b>{d['nao_conf']}</b></td><td><a class='btn view' href='/detalhe/{ch}'>Ver</a> <a class='btn del' href='/apagar/{ch}'>Excluir</a></td></tr>"
     except Exception as e: html+=str(e)
     html+="</table></body></html>"
     return html
 
 @app_flask.route('/detalhe/<chapa>')
 def detalhe(chapa):
-    html=f"<h2>Detalhe {chapa}</h2><a href='/base'>Voltar</a> | <a href='/excel'>Excel</a> | <a href='/graficos'>Gráficos</a><br><br><table border=1 cellpadding=6><tr><th>ITEM</th><th>TAMANHO</th><th>QTD SEPARADA</th><th>FAB</th><th>STATUS</th></tr>"
+    html=f"<h2>Detalhe {chapa}</h2><a href='/base'>Voltar</a><br><br><table border=1 cellpadding=6><tr><th>ITEM</th><th>TAMANHO</th><th>FAB</th><th>STATUS</th></tr>"
     try:
         with open(ARQ_INS, encoding="utf-8") as f:
             for r in csv.DictReader(f):
                 if str(r.get('chapa','')).zfill(6)==str(chapa).zfill(6):
-                    tam=r.get('tamanho','')
-                    import re
-                    nums=re.findall(r'\d+', tam)
-                    qtd=nums[0] if nums else "-"
                     cor="red" if r.get('status')=="Não Conforme" else "green"
-                    html+=f"<tr><td>{r.get('item')}</td><td>{tam}</td><td><b>{qtd}</b></td><td>{r.get('data_fab')}</td><td style='color:{cor}'><b>{r.get('status')}</b></td></tr>"
+                    html+=f"<tr><td>{r.get('item')}</td><td>{r.get('tamanho')}</td><td>{r.get('data_fab')}</td><td style='color:{cor}'><b>{r.get('status')}</b></td></tr>"
     except: pass
-    html+="</table>"
-    return html
+    html+="</table>"; return html
 
 @app_flask.route('/apagar/<chapa>')
 def apagar(chapa):
-    chapa=str(chapa).zfill(6)
-    novas=[]
+    chapa=str(chapa).zfill(6); novas=[]
     try:
         with open(ARQ_INS, encoding="utf-8") as f:
             for r in csv.DictReader(f):
@@ -358,182 +497,103 @@ def apagar(chapa):
     except: pass
     return f"<script>alert('Chapa {chapa} liberada!');window.location='/base';</script>"
 
-@app_flask.route('/pedidos')
-def pedidos():
-    html="<h2>Máscaras TXT</h2><a href='/base'>Voltar</a><br><br>"
-    try:
-        for file in sorted(os.listdir(PASTA_MASC), reverse=True):
-            if file.endswith('.txt'):
-                with open(os.path.join(PASTA_MASC,file), encoding="utf-8") as txtf: conteudo=txtf.read()
-                html+=f"<div style='background:#fffbe6;padding:10px;margin:5px;border:1px solid #ddd'><b>{file}</b> - <a href='/mascaras/{file}' target=_blank>Baixar</a><pre>{conteudo}</pre></div>"
-    except: pass
-    return html
 @app_flask.route('/exportar')
 def exportar(): return send_file(ARQ_INS, as_attachment=True)
 def run_flask(): app_flask.run(host='0.0.0.0', port=int(os.environ.get("PORT",10000)))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
-    context.user_data['resultados']=[]; context.user_data['nao_conforme_lista']=[]
+    context.user_data.clear(); context.user_data['resultados']=[]; context.user_data['nao_conforme_lista']=[]
     try:
         if os.path.exists(BANNER):
             with open(BANNER, "rb") as photo:
                 await context.bot.send_photo(chat_id=update.effective_chat.id, photo=photo, caption="🦺 *INSPEÇÃO DE SEGURANÇA - OPERACIONAL*\n\n👇 Digite sua CHAPA:", parse_mode="Markdown")
             return CHAPA
     except: pass
-    await update.message.reply_text("🦺 *INSPEÇÃO DE SEGURANÇA - OPERACIONAL*\n\nDigite sua CHAPA:")
-    return CHAPA
+    await update.message.reply_text("🦺 *INSPEÇÃO DE SEGURANÇA - OPERACIONAL*\n\nDigite sua CHAPA:"); return CHAPA
 
 async def chapa_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chapa=update.message.text.strip().zfill(6)
-    func=buscar_func(chapa)
+    chapa=update.message.text.strip().zfill(6); func=buscar_func(chapa)
     if not func: func=buscar_func(update.message.text.strip())
-    if not func:
-        await update.message.reply_text(f"❌ Chapa {chapa} não existe.")
-        return CHAPA
-    if ja_inspecionou(chapa):
-        kb = ReplyKeyboardMarkup([[KeyboardButton("🔄 NOVA INSPEÇÃO - /start")]], resize_keyboard=True)
-        await update.message.reply_text(f"⛔ Chapa {chapa} já fez inspeção!", reply_markup=kb)
-        return ConversationHandler.END
+    if not func: await update.message.reply_text(f"❌ Chapa {chapa} não existe."); return CHAPA
+    if ja_inspecionou(chapa): kb = ReplyKeyboardMarkup([[KeyboardButton("🔄 NOVA INSPEÇÃO - /start")]], resize_keyboard=True); await update.message.reply_text(f"⛔ Chapa {chapa} já fez inspeção!", reply_markup=kb); return ConversationHandler.END
     context.user_data['chapa']=chapa; context.user_data['func']=func
     cad=buscar_cadastro(chapa)
     if cad and cad.get('telefone'):
         context.user_data['telefone']=cad['telefone']
         kb=[[KeyboardButton("SIM - Sou motorista"), KeyboardButton("NÃO - Não sou motorista")]]
-        await update.message.reply_text(f"✅ {func['nome']}\nVocê é motorista?", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
-        return EH_MOTORISTA
+        await update.message.reply_text(f"✅ {func['nome']}\nVocê é motorista?", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True)); return EH_MOTORISTA
     else:
         kb=[[KeyboardButton("📱 Compartilhar telefone", request_contact=True)]]
-        await update.message.reply_text(f"✅ {func['nome']}\nCompartilhe telefone:", reply_markup=ReplyKeyboardMarkup(kb, one_time_keyboard=True, resize_keyboard=True))
-        return TELEFONE
+        await update.message.reply_text(f"✅ {func['nome']}\nCompartilhe telefone:", reply_markup=ReplyKeyboardMarkup(kb, one_time_keyboard=True, resize_keyboard=True)); return TELEFONE
 
 async def telefone_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    tel_raw=update.message.contact.phone_number if update.message.contact else update.message.text
-    tel=re.sub(r'\D','',str(tel_raw))[-11:]
-    context.user_data['telefone']=tel
+    tel_raw=update.message.contact.phone_number if update.message.contact else update.message.text; tel=re.sub(r'\D','',str(tel_raw))[-11:]; context.user_data['telefone']=tel
     kb=[[KeyboardButton("SIM - Sou motorista"), KeyboardButton("NÃO - Não sou motorista")]]
-    await update.message.reply_text(f"Telefone {tel} salvo! Você é motorista?", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
-    return EH_MOTORISTA
+    await update.message.reply_text(f"Telefone {tel} salvo! Você é motorista?", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True)); return EH_MOTORISTA
 
 async def motorista_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto=update.message.text.upper()
-    eh_mot = "SIM" if "SIM" in texto else "NÃO"
-    context.user_data['eh_motorista']=eh_mot
-    func=context.user_data['func']
+    texto=update.message.text.upper(); eh_mot = "SIM" if "SIM" in texto else "NÃO"; context.user_data['eh_motorista']=eh_mot; func=context.user_data['func']
     d={"chapa":context.user_data['chapa'],"nome":func['nome'],"cargo":func['cargo'],"data_admissao":func['admissao'],"supervisor":func['supervisor'],"coordenador":func['coordenador'],"telefone":context.user_data['telefone'],"id_telegram":str(update.effective_user.id),"eh_motorista":eh_mot}
     salvar_cadastro(d)
     if eh_mot=="SIM": context.user_data['itens_filtrados']=ITENS
     else: context.user_data['itens_filtrados']=[i for i in ITENS if i['regra']=="TODOS"]
-    context.user_data['item_idx']=0
-    return await proximo_item(update, context)
+    context.user_data['item_idx']=0; return await proximo_item(update, context)
 
 async def proximo_item(update, context):
-    idx=context.user_data.get('item_idx',0)
-    itens=context.user_data.get('itens_filtrados', ITENS)
+    idx=context.user_data.get('item_idx',0); itens=context.user_data.get('itens_filtrados', ITENS)
     if idx >= len(itens): return await finalizar(update, context)
-    item=itens[idx]
-    context.user_data['item_atual']=item; context.user_data['tamanho_atual']=""; context.user_data['data_fab_atual']=""; context.user_data['validade_atual']=""
-    if item.get('auto_cone'):
-        kb=[[KeyboardButton("Utilitário"), KeyboardButton("Passeio")]]
-        await update.message.reply_text(f"🚧 {idx+1}/{len(itens)} - {item['nome']}\nSelecione o tipo de veículo:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
-        return CONE_TIPO
-    if item.get('auto_mosquetao'):
-        kb=[[KeyboardButton("1"), KeyboardButton("2"), KeyboardButton("3")]]
-        await update.message.reply_text(f"🔗 {idx+1}/{len(itens)} - {item['nome']}\nQuantidade mínima 3!\nSelecione quantidade:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
-        return TAMANHO
-    if item.get('tamanho'):
-        await update.message.reply_text(f"📏 {idx+1}/{len(itens)} - {item['nome']}\nDigite {item.get('label_tamanho','TAMANHO')}:")
-        return TAMANHO
-    if item.get('data_fab'):
-        await update.message.reply_text(f"📅 {idx+1}/{len(itens)} - {item['nome']}\nDigite DATA FAB DD/MM/AAAA:")
-        return DATA_FAB
-    kb=[[KeyboardButton(o) for o in item['opcoes']]]
-    await update.message.reply_text(f"🔍 {idx+1}/{len(itens)} - {item['nome']}\nSelecione:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
-    return STATUS
+    item=itens[idx]; context.user_data['item_atual']=item; context.user_data['tamanho_atual']=""; context.user_data['data_fab_atual']=""; context.user_data['validade_atual']=""
+    if item.get('auto_cone'): kb=[[KeyboardButton("Utilitário"), KeyboardButton("Passeio")]]; await update.message.reply_text(f"🚧 {idx+1}/{len(itens)} - {item['nome']}\nSelecione o tipo:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True)); return CONE_TIPO
+    if item.get('auto_mosquetao'): kb=[[KeyboardButton("1"), KeyboardButton("2"), KeyboardButton("3")]]; await update.message.reply_text(f"🔗 {idx+1}/{len(itens)} - {item['nome']}\nQuantidade mínima 3!\nSelecione:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True)); return TAMANHO
+    if item.get('tamanho'): await update.message.reply_text(f"📏 {idx+1}/{len(itens)} - {item['nome']}\nDigite {item.get('label_tamanho','TAMANHO')}:"); return TAMANHO
+    if item.get('data_fab'): await update.message.reply_text(f"📅 {idx+1}/{len(itens)} - {item['nome']}\nDigite DATA FAB DD/MM/AAAA:"); return DATA_FAB
+    kb=[[KeyboardButton(o) for o in item['opcoes']]]; await update.message.reply_text(f"🔍 {idx+1}/{len(itens)} - {item['nome']}\nSelecione:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True)); return STATUS
 
 async def cone_tipo_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    tipo = update.message.text.strip()
-    tipo_norm = "Utilitário" if "UTILIT" in tipo.upper() else "Passeio"
-    context.user_data['cone_tipo'] = tipo_norm
-    if tipo_norm == "Utilitário":
-        kb = [[KeyboardButton(str(i)) for i in range(1,6)], [KeyboardButton(str(i)) for i in range(6,11)]]
-        await update.message.reply_text(f"🚐 Utilitário - Mínimo 10 cones!\nSelecione quantidade (1 a 10):", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
-    else:
-        kb = [[KeyboardButton(str(i)) for i in range(1,6)]]
-        await update.message.reply_text(f"🚗 Passeio - Mínimo 5 cones!\nSelecione quantidade (1 a 5):", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
+    tipo = update.message.text.strip(); tipo_norm = "Utilitário" if "UTILIT" in tipo.upper() else "Passeio"; context.user_data['cone_tipo'] = tipo_norm
+    if tipo_norm == "Utilitário": kb = [[KeyboardButton(str(i)) for i in range(1,6)], [KeyboardButton(str(i)) for i in range(6,11)]]; await update.message.reply_text(f"🚐 Utilitário - Mínimo 10 cones!\nSelecione:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
+    else: kb = [[KeyboardButton(str(i)) for i in range(1,6)]]; await update.message.reply_text(f"🚗 Passeio - Mínimo 5 cones!\nSelecione:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
     return CONE_QTD
 
 async def cone_qtd_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto = update.message.text.strip()
-    qtd = int(texto) if texto.isdigit() else 0
-    tipo = context.user_data.get('cone_tipo','Utilitário')
-    if tipo == "Utilitário":
-        status_auto = "Não Conforme" if qtd < 10 else "Conforme"
-    else:
-        status_auto = "Não Conforme" if qtd < 5 else "Conforme"
-    msg = f"{'🔴' if status_auto=='Não Conforme' else '🟢'} CONES {tipo} QTD {qtd} = {status_auto}!"
-    item = context.user_data['item_atual']
-    res={"item":f"{item['nome']} - {tipo}","tamanho":f"QTD {qtd} - {tipo}","data_fab":"","validade":"","status":status_auto}
+    texto = update.message.text.strip(); qtd = int(texto) if texto.isdigit() else 0; tipo = context.user_data.get('cone_tipo','Utilitário')
+    status_auto = "Não Conforme" if (tipo=="Utilitário" and qtd<10) or (tipo=="Passeio" and qtd<5) else "Conforme"
+    item = context.user_data['item_atual']; res={"item":f"{item['nome']} - {tipo}","tamanho":f"QTD {qtd} - {tipo}","data_fab":"","validade":"","status":status_auto}
     context.user_data['resultados'].append(res)
     if status_auto=="Não Conforme": context.user_data['nao_conforme_lista'].append(res)
-    await update.message.reply_text(msg)
-    context.user_data['item_idx']+=1
-    return await proximo_item(update, context)
+    await update.message.reply_text(f"{'🔴' if status_auto=='Não Conforme' else '🟢'} CONES {tipo} QTD {qtd} = {status_auto}!"); context.user_data['item_idx']+=1; return await proximo_item(update, context)
 
 async def tamanho_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    item=context.user_data['item_atual']
-    texto = update.message.text.strip()
+    item=context.user_data['item_atual']; texto = update.message.text.strip()
     if item.get('auto_mosquetao'):
-        qtd = texto
-        status_auto = "Não Conforme" if qtd in ["1","2"] else "Conforme"
-        msg = f"🔴 MOSQUETÃO QTD {qtd} = NÃO CONFORME!" if status_auto=="Não Conforme" else f"🟢 MOSQUETÃO QTD {qtd} = CONFORME!"
+        qtd = texto; status_auto = "Não Conforme" if qtd in ["1","2"] else "Conforme"
         res={"item":item['nome'],"tamanho":f"QTD {qtd}","data_fab":"","validade":"","status":status_auto}
         context.user_data['resultados'].append(res)
         if status_auto=="Não Conforme": context.user_data['nao_conforme_lista'].append(res)
-        await update.message.reply_text(msg)
-        context.user_data['item_idx']+=1
-        return await proximo_item(update, context)
+        await update.message.reply_text(f"{'🔴' if status_auto=='Não Conforme' else '🟢'} MOSQUETÃO QTD {qtd} = {status_auto}!"); context.user_data['item_idx']+=1; return await proximo_item(update, context)
     ok, val = validar_tamanho(texto, item.get('tamanho_tipo',''))
-    if not ok:
-        await update.message.reply_text(f"❌ {val}")
-        return TAMANHO
+    if not ok: await update.message.reply_text(f"❌ {val}"); return TAMANHO
     context.user_data['tamanho_atual']=val
-    if item.get('data_fab'):
-        await update.message.reply_text(f"Tam {val} OK! Agora DATA FAB:")
-        return DATA_FAB
-    kb=[[KeyboardButton(o) for o in item['opcoes']]]
-    await update.message.reply_text(f"Tam {val} OK! Selecione:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
-    return STATUS
+    if item.get('data_fab'): await update.message.reply_text(f"Tam {val} OK! Agora DATA FAB:"); return DATA_FAB
+    kb=[[KeyboardButton(o) for o in item['opcoes']]]; await update.message.reply_text(f"Tam {val} OK! Selecione:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True)); return STATUS
 
 async def data_fab_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto=update.message.text.strip()
-    if not re.match(r"\d{2}/\d{2}/\d{4}", texto):
-        await update.message.reply_text("❌ Use DD/MM/AAAA")
-        return DATA_FAB
-    item=context.user_data['item_atual']
-    validade, vencido = calcular_validade(texto, item.get('validade_anos',5))
-    context.user_data['data_fab_atual']=texto
-    context.user_data['validade_atual']=validade
+    if not re.match(r"\d{2}/\d{2}/\d{4}", texto): await update.message.reply_text("❌ Use DD/MM/AAAA"); return DATA_FAB
+    item=context.user_data['item_atual']; validade, vencido = calcular_validade(texto, item.get('validade_anos',5))
+    context.user_data['data_fab_atual']=texto; context.user_data['validade_atual']=validade
     if vencido:
         res={"item":item['nome'],"tamanho":context.user_data.get('tamanho_atual',''),"data_fab":texto,"validade":validade,"status":"Não Conforme"}
-        context.user_data['resultados'].append(res)
-        context.user_data['nao_conforme_lista'].append(res)
-        await update.message.reply_text(f"⚠️ VENCIDO em {validade}! 🔴 NÃO CONFORME AUTOMÁTICO!")
-        context.user_data['item_idx']+=1
-        return await proximo_item(update, context)
-    else:
-        kb=[[KeyboardButton(o) for o in item['opcoes']]]
-        await update.message.reply_text(f"📅 Validade {validade} - OK ✅\nSelecione:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
-        return STATUS
+        context.user_data['resultados'].append(res); context.user_data['nao_conforme_lista'].append(res)
+        await update.message.reply_text(f"⚠️ VENCIDO em {validade}! 🔴 NÃO CONFORME AUTOMÁTICO!"); context.user_data['item_idx']+=1; return await proximo_item(update, context)
+    else: kb=[[KeyboardButton(o) for o in item['opcoes']]]; await update.message.reply_text(f"📅 Validade {validade} - OK ✅\nSelecione:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True)); return STATUS
 
 async def status_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    status=update.message.text.strip()
-    item=context.user_data['item_atual']
+    status=update.message.text.strip(); item=context.user_data['item_atual']
     res={"item":item['nome'],"tamanho":context.user_data.get('tamanho_atual',''),"data_fab":context.user_data.get('data_fab_atual',''),"validade":context.user_data.get('validade_atual',''),"status":status}
     context.user_data['resultados'].append(res)
     if status=="Não Conforme": context.user_data['nao_conforme_lista'].append(res)
-    context.user_data['item_idx']+=1
-    return await proximo_item(update, context)
+    context.user_data['item_idx']+=1; return await proximo_item(update, context)
 
 async def finalizar(update, context):
     chapa=context.user_data['chapa']; func=context.user_data['func']; tel=context.user_data['telefone']; eh_mot=context.user_data['eh_motorista']
@@ -545,7 +605,15 @@ async def finalizar(update, context):
     dados_colab={"chapa":chapa,"nome":func['nome'],"cargo":func['cargo'],"data_admissao":func['admissao'],"supervisor":func['supervisor'],"coordenador":func['coordenador'],"telefone":tel,"eh_motorista":eh_mot}
     caminho_txt, txt_conteudo = gerar_mascara_txt(dados_colab, nao_conf)
     with open(ARQ_PEDIDOS, "a", newline="", encoding="utf-8") as f: csv.writer(f).writerow([data_hora, chapa, func['nome'], tel, func['supervisor'], txt_conteudo.replace("\n"," | ")])
+
+    enviado=False; dest=[]
+    if nao_conf:
+        enviado, dest = enviar_email_nao_conforme(func['supervisor'], func['coordenador'], chapa, func['nome'], nao_conf, caminho_txt, dados_colab)
+
     msg=f"✅ FINALIZADA!\n\nCHAPA: {chapa}\nNÃO CONF: {len(nao_conf)}\n\n📋 MÁSCARA:\n{txt_conteudo}"
+    if enviado: msg+=f"\n\n📧 E-mail enviado para: {', '.join(dest)}"
+    elif nao_conf: msg+=f"\n\n⚠️ Email não enviado - verifique EMAIL_USER/PASS no Render."
+
     await update.message.reply_text(msg)
     if os.path.exists(caminho_txt):
         await context.bot.send_document(chat_id=update.effective_chat.id, document=open(caminho_txt, "rb"), filename=os.path.basename(caminho_txt), caption="📄 MÁSCARA TXT")
@@ -555,8 +623,7 @@ async def finalizar(update, context):
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = ReplyKeyboardMarkup([[KeyboardButton("/start - Nova Inspeção")]], resize_keyboard=True)
-    await update.message.reply_text("Cancelado! /start para recomeçar", reply_markup=kb)
-    return ConversationHandler.END
+    await update.message.reply_text("Cancelado! /start para recomeçar", reply_markup=kb); return ConversationHandler.END
 
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
@@ -566,20 +633,9 @@ def main():
     app = Application.builder().token(TOKEN).build()
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
-        states={
-            CHAPA: [MessageHandler(filters.TEXT & ~filters.COMMAND, chapa_step)],
-            TELEFONE: [MessageHandler(filters.ALL, telefone_step)],
-            EH_MOTORISTA: [MessageHandler(filters.TEXT & ~filters.COMMAND, motorista_step)],
-            TAMANHO: [MessageHandler(filters.TEXT & ~filters.COMMAND, tamanho_step)],
-            DATA_FAB: [MessageHandler(filters.TEXT & ~filters.COMMAND, data_fab_step)],
-            STATUS: [MessageHandler(filters.TEXT & ~filters.COMMAND, status_step)],
-            CONE_TIPO: [MessageHandler(filters.TEXT & ~filters.COMMAND, cone_tipo_step)],
-            CONE_QTD: [MessageHandler(filters.TEXT & ~filters.COMMAND, cone_qtd_step)],
-        },
+        states={CHAPA: [MessageHandler(filters.TEXT & ~filters.COMMAND, chapa_step)], TELEFONE: [MessageHandler(filters.ALL, telefone_step)], EH_MOTORISTA: [MessageHandler(filters.TEXT & ~filters.COMMAND, motorista_step)], TAMANHO: [MessageHandler(filters.TEXT & ~filters.COMMAND, tamanho_step)], DATA_FAB: [MessageHandler(filters.TEXT & ~filters.COMMAND, data_fab_step)], STATUS: [MessageHandler(filters.TEXT & ~filters.COMMAND, status_step)], CONE_TIPO: [MessageHandler(filters.TEXT & ~filters.COMMAND, cone_tipo_step)], CONE_QTD: [MessageHandler(filters.TEXT & ~filters.COMMAND, cone_qtd_step)],},
         fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)]
     )
-    app.add_handler(conv)
-    app.add_handler(CommandHandler("start", start))
-    app.run_polling(drop_pending_updates=True)
+    app.add_handler(conv); app.add_handler(CommandHandler("start", start)); app.run_polling(drop_pending_updates=True)
 
 if __name__=="__main__": main()
