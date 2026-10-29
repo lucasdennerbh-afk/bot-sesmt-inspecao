@@ -247,16 +247,7 @@ def home(): return f"BOT SESMT ON - <a href='/base'>BASE ESTATISTICA</a> | <a hr
 @app_flask.route('/mascaras/<path:filename>')
 def masc(filename): return send_from_directory(PASTA_MASC, filename)
 
-@app_flask.route('/excel')
-def excel_route():
-    filtro_sup = request.args.get('supervisor','').strip().upper()
-    filtro_ger = request.args.get('gerente','').strip().upper()
-    caminho = gerar_excel_completo(filtro_supervisor=filtro_sup, filtro_gerente=filtro_ger)
-    if not caminho or not os.path.exists(caminho): return "Sem dados"
-    nome = f"SESMT_{filtro_sup or 'TODOS'}_{filtro_ger or 'TODOS'}_{datetime.datetime.now().strftime('%d%m%Y_%H%M')}.xlsx"
-    return send_file(caminho, as_attachment=True, download_name=nome)
-
-def gerar_excel_completo(caminho="/tmp/sesmt_completo.xlsx", filtro_supervisor="", filtro_gerente=""):
+def gerar_excel_completo(caminho="/tmp/sesmt_completo.xlsx", filtro_supervisor="", filtro_coordenador=""):
     try:
         import pandas as pd
     except: return None
@@ -267,7 +258,7 @@ def gerar_excel_completo(caminho="/tmp/sesmt_completo.xlsx", filtro_supervisor="
                 sup = str(r.get('supervisor','')).upper()
                 coord = str(r.get('coordenador','')).upper()
                 if filtro_supervisor and filtro_supervisor not in sup: continue
-                if filtro_gerente and filtro_gerente not in coord: continue
+                if filtro_coordenador and filtro_coordenador not in coord: continue
                 linhas.append(r)
     except: linhas=[]
     if not linhas: return None
@@ -275,19 +266,29 @@ def gerar_excel_completo(caminho="/tmp/sesmt_completo.xlsx", filtro_supervisor="
     df_nc = df[df['status']=='Não Conforme']
     resumo = df_nc.groupby('item').size().reset_index(name='QTD_NAO_CONFORME').sort_values('QTD_NAO_CONFORME', ascending=False)
     resumo_sup = df_nc.groupby(['supervisor','item']).size().reset_index(name='QTD')
+    resumo_coord = df_nc.groupby(['coordenador','item']).size().reset_index(name='QTD')
     with pd.ExcelWriter(caminho, engine='openpyxl') as writer:
         resumo.to_excel(writer, sheet_name='RESUMO_NAO_CONFORME', index=False)
-        df.to_excel(writer, sheet_name='DETALHADO', index=False)
+        df.to_excel(writer, sheet_name='DETALHADO_FILTRADO', index=False)
         df_nc.to_excel(writer, sheet_name='SO_NAO_CONFORME', index=False)
         resumo_sup.to_excel(writer, sheet_name='POR_SUPERVISOR', index=False)
+        resumo_coord.to_excel(writer, sheet_name='POR_COORDENADOR', index=False)
     return caminho
 
-# === BASE COM FILTROS ===
+@app_flask.route('/excel')
+def excel_route():
+    filtro_sup = request.args.get('supervisor','').strip().upper()
+    filtro_coord = request.args.get('coordenador','').strip().upper() or request.args.get('gerente','').strip().upper()
+    caminho = gerar_excel_completo(filtro_supervisor=filtro_sup, filtro_coordenador=filtro_coord)
+    if not caminho or not os.path.exists(caminho): return "Sem dados"
+    nome = f"SESMT_{filtro_sup or 'TODOS'}_{filtro_coord or 'TODOS'}_{datetime.datetime.now().strftime('%d%m%Y_%H%M')}.xlsx"
+    return send_file(caminho, as_attachment=True, download_name=nome)
+
+# ===== BASE ESTATISTICA COM FILTROS =====
 @app_flask.route('/base')
 def base():
     filtro_sup = request.args.get('supervisor','').strip().upper()
     filtro_coord = request.args.get('coordenador','').strip().upper()
-
     feitos = set()
     inspecoes_detalhe = {}
     try:
@@ -300,7 +301,6 @@ def base():
                 if r.get('status')=='Não Conforme': inspecoes_detalhe[ch]['nao_conf']+=1
     except: pass
     justificados = get_justificados()
-
     por_supervisor = defaultdict(list)
     chapas_unicas = {}
     for chapa_key, dados in FUNCIONARIOS.items():
@@ -313,29 +313,16 @@ def base():
         if filtro_sup and filtro_sup not in sup: continue
         if filtro_coord and filtro_coord not in coord: continue
         por_supervisor[sup].append({'chapa':ch6, 'nome':dados.get('nome',''), 'cargo':dados.get('cargo',''), 'coordenador':coord})
-
     todos_sup = sorted(SUPERVISORES_LISTA)
     todos_coord = sorted(COORDENADORES_LISTA)
     opt_sup = "".join([f"<option value='{s}' {'selected' if s==filtro_sup else ''}>{s}</option>" for s in todos_sup])
     opt_coord = "".join([f"<option value='{c}' {'selected' if c==filtro_coord else ''}>{c}</option>" for c in todos_coord])
-
     html = f"""
     <html><head><meta charset='utf-8'><title>BASE ESTATISTICA</title>
-    <style>
-    body{{font-family:Arial;padding:15px;background:#f0f2f5}}
-    .card{{background:white;padding:15px;border-radius:10px;margin-bottom:20px;box-shadow:0 2px 5px rgba(0,0,0,0.1)}}
-    table{{width:100%;border-collapse:collapse;background:white;font-size:12px}}
-    th,td{{border:1px solid #ddd;padding:7px;text-align:left}}
-    th{{background:#0F4C8F;color:white}}
-    .btn{{padding:8px 14px;border-radius:5px;color:white;text-decoration:none;display:inline-block;font-size:12px;margin:2px}}
-    .badge{{padding:3px 8px;border-radius:10px;color:white;font-weight:bold}}
-    h2{{color:#0F4C8F}}
-    select{{padding:8px;min-width:300px}}
-    </style></head><body>
+    <style>body{{font-family:Arial;padding:15px;background:#f0f2f5}} .card{{background:white;padding:15px;border-radius:10px;margin-bottom:20px;box-shadow:0 2px 5px rgba(0,0,0,0.1)}} table{{width:100%;border-collapse:collapse;background:white;font-size:12px}} th,td{{border:1px solid #ddd;padding:7px;text-align:left}} th{{background:#0F4C8F;color:white}} .btn{{padding:8px 14px;border-radius:5px;color:white;text-decoration:none;display:inline-block;font-size:12px;margin:2px}} .badge{{padding:3px 8px;border-radius:10px;color:white;font-weight:bold}} h2{{color:#0F4C8F}} select{{padding:8px;min-width:300px}}</style></head><body>
     <h2>📊 ESTATÍSTICA POR SUPERVISOR - BASE SESMT</h2>
     <div class='card' style='background:#e8f0fe;border:2px solid #0F4C8F'>
-        <form method='get'>
-            <b>FILTRAR:</b><br>
+        <form method='get'><b>FILTRAR ESTATÍSTICA:</b><br>
             SUPERVISOR: <select name='supervisor'><option value=''>-- TODOS SUPERVISORES --</option>{opt_sup}</select>
             COORDENADOR: <select name='coordenador'><option value=''>-- TODOS COORDENADORES --</option>{opt_coord}</select>
             <button class='btn' style='background:#0F4C8F'>🔍 FILTRAR</button>
@@ -345,11 +332,10 @@ def base():
         </form>
         <div style='margin-top:10px;font-weight:bold'>FILTRO ATUAL: Supervisor={filtro_sup or 'TODOS'} | Coordenador={filtro_coord or 'TODOS'}</div>
     </div>
-    <a class='btn' style='background:#0F4C8F' href='/graficos'>📈 GRAFICOS</a>
+    <a class='btn' style='background:#0F4C8F' href='/graficos'>📈 DASHBOARD NÃO CONFORME</a>
     <a class='btn' style='background:green' href='/excel'>📥 EXCEL INSPEÇÕES</a>
     <br><br>
     """
-
     html += "<div class='card'><h3>RESUMO GERAL FILTRADO</h3><table><tr><th>SUPERVISOR</th><th>COORDENADOR</th><th>TOTAL</th><th>FEITOS</th><th>JUSTIFICADOS</th><th>PENDENTES</th><th>%</th></tr>"
     for sup, lista_colab in sorted(por_supervisor.items()):
         total = len(lista_colab)
@@ -361,7 +347,6 @@ def base():
         coord_exemplo = lista_colab[0]['coordenador'] if lista_colab else ''
         html += f"<tr><td><b>{sup}</b></td><td>{coord_exemplo}</td><td style='text-align:center'>{total}</td><td style='text-align:center;color:green'><b>{feitos_sup}</b></td><td style='text-align:center;color:blue'><b>{just_sup}</b></td><td style='text-align:center;color:red'><b>{pendentes}</b></td><td><span class='badge' style='background:{cor}'>{perc}%</span></td></tr>"
     html += "</table></div>"
-
     for sup, lista_colab in sorted(por_supervisor.items()):
         total = len(lista_colab)
         feitos_sup = [c for c in lista_colab if c['chapa'] in feitos]
@@ -525,10 +510,11 @@ def remover_just(chapa):
     except: pass
     return f"<script>alert('Justificativa removida!');window.location='/base?supervisor={filtro_sup}&coordenador={filtro_coord}';</script>"
 
+# ===== DASHBOARD NAO CONFORME - COM COORDENADOR (ANTES GERENTE) =====
 @app_flask.route('/graficos')
 def graficos():
     filtro_sup = request.args.get('supervisor','').strip().upper()
-    filtro_ger = request.args.get('gerente','').strip().upper()
+    filtro_coord = request.args.get('coordenador','').strip().upper() or request.args.get('gerente','').strip().upper()
     linhas=[]
     try:
         with open(ARQ_INS, encoding="utf-8") as f:
@@ -536,31 +522,62 @@ def graficos():
                 sup = str(r.get('supervisor','')).upper()
                 coord = str(r.get('coordenador','')).upper()
                 if filtro_sup and filtro_sup not in sup: continue
-                if filtro_ger and filtro_ger not in coord: continue
+                if filtro_coord and filtro_coord not in coord: continue
                 linhas.append(r)
     except: linhas=[]
     df_nc = [r for r in linhas if str(r.get('status','')).strip() == 'Não Conforme']
     todos_sup = sorted(SUPERVISORES_LISTA)
-    todos_ger = sorted(COORDENADORES_LISTA)
+    todos_coord = sorted(COORDENADORES_LISTA)
     options_sup = "".join([f"<option value='{s}' {'selected' if s==filtro_sup else ''}>{s}</option>" for s in todos_sup])
-    options_ger = "".join([f"<option value='{g}' {'selected' if g==filtro_ger else ''}>{g}</option>" for g in todos_ger])
+    options_coord = "".join([f"<option value='{c}' {'selected' if c==filtro_coord else ''}>{c}</option>" for c in todos_coord])
     cont_item = Counter([r.get('item','').strip() for r in df_nc if r.get('item')])
+    cont_sup = Counter([r.get('supervisor','').strip() for r in df_nc if r.get('supervisor')])
+    cont_coord = Counter([r.get('coordenador','').strip() for r in df_nc if r.get('coordenador')])
+    cont_sup_item = defaultdict(Counter)
+    for r in df_nc:
+        sup = r.get('supervisor','').strip()
+        item = r.get('item','').strip()
+        if sup and item: cont_sup_item[sup][item] += 1
     top_itens = cont_item.most_common(15)
     labels_itens = [x[0] for x in top_itens]
     values_itens = [int(x[1]) for x in top_itens]
+    top_sup = cont_sup.most_common(15)
+    labels_sup = [x[0] for x in top_sup]
+    values_sup = [int(x[1]) for x in top_sup]
+    top_coord = cont_coord.most_common(15)
+    labels_coord = [x[0] for x in top_coord]
+    values_coord = [int(x[1]) for x in top_coord]
+    tabela_sup = "".join([f"<tr><td><b>{sup}</b></td><td>{EMAILS_SUP.get(sup,'')}</td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for sup,qtd in cont_sup.most_common()])
+    tabela_sup_detalhada = "".join([f"<tr><td>{sup}</td><td>{item}</td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for sup, counter in cont_sup_item.items() for item,qtd in counter.most_common()])
+    cont_item_tam = defaultdict(Counter)
+    for r in df_nc:
+        cont_item_tam[r.get('item','')][r.get('tamanho','')] += 1
+    tabela_item_tamanho = "".join([f"<tr><td>{item}</td><td><b>{tam}</b></td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for item, c in cont_item_tam.items() for tam,qtd in c.most_common() if tam])
+    filtro_txt = f"FILTRO: Supervisor={filtro_sup or 'TODOS'} | Coordenador={filtro_coord or 'TODOS'} - Total NC: {len(df_nc)}" if filtro_sup or filtro_coord else f"SEM FILTRO - Total NC: {len(df_nc)}"
     html = f"""
-    <html><head><meta charset='utf-8'><title>GRÁFICOS</title>
+    <html><head><meta charset='utf-8'><title>DASHBOARD NÃO CONFORME</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <style>body{{font-family:Arial;padding:20px;background:#f0f2f5}} .card{{background:white;padding:20px;border-radius:10px;margin-bottom:20px}} select{{padding:8px;min-width:280px}} .btn{{padding:8px 14px;border-radius:5px;color:white;background:#0F4C8F;text-decoration:none}}</style></head><body>
-    <h2>📊 DASHBOARD</h2><a href='/base'>BASE</a>
-    <div class='card'><form method='get'><select name='supervisor'><option value=''>-- TODOS SUP --</option>{options_sup}</select> <select name='gerente'><option value=''>-- TODOS GER --</option>{options_ger}</select> <button class='btn'>Filtrar</button></form></div>
-    <div class='card'><h3>Itens Não Conforme - Top 15</h3><ul>{"".join([f"<li>{i} - {c}</li>" for i,c in top_itens])}</ul></div>
-    </body></html>"""
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+    <style>body{{font-family:Arial;padding:20px;background:#f0f2f5}} .card{{background:white;padding:20px;border-radius:10px;margin-bottom:20px}} h2{{color:#0F4C8F}} table{{border-collapse:collapse;width:100%}} th,td{{border:1px solid #ddd;padding:8px;font-size:13px}} th{{background:#0F4C8F;color:white}} .chart-wrap{{height:400px}} select{{padding:8px;min-width:280px}} .btn{{padding:8px 14px;border-radius:5px;color:white;background:#0F4C8F;text-decoration:none}} .btn-green{{background:green}}</style></head><body>
+    <h2>📊 DASHBOARD SESMT - ITENS NÃO CONFORME</h2><a href='/base'>BASE ESTATISTICA</a> | <a href='/emails'>EMAILS</a>
+    <div class='card' style='background:#e8f0fe;border:2px solid #0F4C8F'>
+        <form method='get' style='display:flex;gap:15px;flex-wrap:wrap'><div><b>SUPERVISOR:</b><br><select name='supervisor'><option value=''>-- TODOS SUPERVISORES --</option>{options_sup}</select></div><div><b>COORDENADOR:</b><br><select name='coordenador'><option value=''>-- TODOS COORDENADORES --</option>{options_coord}</select></div><div><br><button class='btn'>🔍 FILTRAR</button> <a href='/graficos' class='btn' style='background:#6c757d'>Limpar</a> <a href='/excel?supervisor={filtro_sup}&coordenador={filtro_coord}' class='btn btn-green'>📥 EXCEL FILTRO</a></div></form><div style='margin-top:10px;color:#0F4C8F;font-weight:bold'>{filtro_txt}</div>
+    </div>
+    <div style='display:flex;gap:20px;flex-wrap:wrap'><div class='card' style='flex:2;min-width:500px'><h3>Por Item NÃO CONFORME</h3><div class='chart-wrap'><canvas id='chartItens'></canvas></div></div><div class='card' style='flex:1;min-width:400px'><h3>Por Supervisor</h3><div class='chart-wrap'><canvas id='chartSup'></canvas></div></div><div class='card' style='flex:1;min-width:400px'><h3>Por Coordenador</h3><div class='chart-wrap'><canvas id='chartCoord'></canvas></div></div></div>
+    <div style='display:flex;gap:20px;flex-wrap:wrap'><div class='card' style='flex:1'><h3>👷 SOMA POR SUPERVISOR - NÃO CONFORME</h3><table><tr><th>SUPERVISOR</th><th>EMAIL</th><th>QTD NC</th></tr>{tabela_sup}</table><br><table><tr><th>SUP</th><th>ITEM</th><th>QTD</th></tr>{tabela_sup_detalhada}</table></div><div class='card' style='flex:1'><h3>📦 Item + Tamanho NÃO CONFORME</h3><table><tr><th>ITEM</th><th>TAM</th><th>QTD</th></tr>{tabela_item_tamanho}</table></div></div>
+    <script>
+    const labelsItens = {json.dumps(labels_itens)}; const valuesItens = {json.dumps(values_itens)};
+    const labelsSup = {json.dumps(labels_sup)}; const valuesSup = {json.dumps(values_sup)};
+    const labelsCoord = {json.dumps(labels_coord)}; const valuesCoord = {json.dumps(values_coord)};
+    new Chart(document.getElementById('chartItens'), {{type:'bar', data:{{labels:labelsItens, datasets:[{{data:valuesItens, backgroundColor:'#0F4C8F'}}]}}, options:{{indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{{legend:{{display:false}}, datalabels:{{anchor:'end', align:'end', color:'#000', font:{{weight:'bold', size:14}}}} }}, scales:{{x:{{beginAtZero:true}}}} }}, plugins:[ChartDataLabels]}});
+    new Chart(document.getElementById('chartSup'), {{type:'bar', data:{{labels:labelsSup, datasets:[{{data:valuesSup, backgroundColor:'#FFCC00'}}]}}, options:{{indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{{legend:{{display:false}}, datalabels:{{anchor:'end', align:'end', color:'#000', font:{{weight:'bold', size:14}}}} }}, scales:{{x:{{beginAtZero:true}}}} }}, plugins:[ChartDataLabels]}});
+    new Chart(document.getElementById('chartCoord'), {{type:'bar', data:{{labels:labelsCoord, datasets:[{{data:valuesCoord, backgroundColor:'#28a745'}}]}}, options:{{indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{{legend:{{display:false}}, datalabels:{{anchor:'end', align:'end', color:'#000', font:{{weight:'bold', size:14}}}} }}, scales:{{x:{{beginAtZero:true}}}} }}, plugins:[ChartDataLabels]}});
+    </script></body></html>"""
     return html
 
 @app_flask.route('/emails')
 def ver_emails():
-    html="<h2>Emails</h2><a href='/base'>BASE</a><br><br><table border=1 cellpadding=8><tr><th>NOME</th><th>EMAIL</th></tr>"
+    html="<h2>Emails</h2><a href='/base'>BASE</a> | <a href='/graficos'>GRAFICOS</a><br><br><table border=1 cellpadding=8><tr><th>NOME</th><th>EMAIL</th></tr>"
     for n,e in sorted(EMAILS_SUP.items()): html+=f"<tr><td>{n}</td><td>{e}</td></tr>"
     html+="</table>"
     return html
