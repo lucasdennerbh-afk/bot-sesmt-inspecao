@@ -1,6 +1,6 @@
 import os, threading, csv, datetime, re, uuid, json, unicodedata
 from collections import Counter, defaultdict
-from flask import Flask, send_from_directory, request, send_file
+from flask import Flask, send_from_directory, request, send_file, redirect
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, ConversationHandler, filters, ContextTypes
 
@@ -9,6 +9,7 @@ ARQ_FUNC = "funcionarios.csv"
 ARQ_CAD = "cadastros.csv"
 ARQ_INS = "inspecoes.csv"
 ARQ_PEDIDOS = "pedidos_mascaras.csv"
+ARQ_JUST = "justificativas.csv"
 PASTA_MASC = "mascaras"
 BANNER = "banner.jpg"
 ARQ_SUP_EMAIL = "supervisores.csv"
@@ -76,7 +77,7 @@ def carregar_emails_sup():
     except: pass
 carregar_emails_sup()
 
-for arq, head in [(ARQ_CAD, ["chapa","nome","cargo","data_admissao","supervisor","coordenador","telefone","id_telegram","eh_motorista"]), (ARQ_INS, ["data","chapa","nome","cargo","supervisor","coordenador","telefone","eh_motorista","item","tamanho","data_fab","validade","status"]), (ARQ_PEDIDOS, ["data","chapa","nome","telefone","supervisor","mascara_txt"])]:
+for arq, head in [(ARQ_CAD, ["chapa","nome","cargo","data_admissao","supervisor","coordenador","telefone","id_telegram","eh_motorista"]), (ARQ_INS, ["data","chapa","nome","cargo","supervisor","coordenador","telefone","eh_motorista","item","tamanho","data_fab","validade","status"]), (ARQ_PEDIDOS, ["data","chapa","nome","telefone","supervisor","mascara_txt"]), (ARQ_JUST, ["data","chapa","nome","supervisor","motivo"])]:
     if not os.path.exists(arq):
         with open(arq, "w", newline="", encoding="utf-8") as f: csv.writer(f).writerow(head)
 
@@ -162,6 +163,14 @@ def calcular_validade(data_str, anos=5):
         venc = dt + datetime.timedelta(days=anos*365)
         return venc.strftime("%d/%m/%Y"), venc < datetime.datetime.now()
     except: return "", False
+def get_justificados():
+    just={}
+    try:
+        with open(ARQ_JUST, encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                just[str(r.get('chapa','')).zfill(6)] = r
+    except: pass
+    return just
 
 def gerar_mascara_txt(dados_colab, lista_nao_conforme):
     txt = f"""========================================
@@ -191,12 +200,8 @@ ITENS NÃO CONFORME:
             txt += f"   STATUS: {r.get('status')}\n   ---\n"
     txt += f"""
 
-OBSERVAÇÃO:
-Colaborador ciente que deve procurar o almoxarifado
-para troca dos EPIs Não Conforme em até 48h.
-
+OBSERVAÇÃO: Colaborador ciente que deve procurar o almoxarifado para troca dos EPIs Não Conforme em até 48h.
 Ass. Colaborador: ________________________
-
 Ass. SESMT: ________________________
 
 Gerado automaticamente pelo BOT SESMT
@@ -251,20 +256,8 @@ def enviar_email_nao_conforme(supervisor_nome, coordenador_nome, chapa, nome_col
         SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com").strip()
         SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
         assunto = f"INSPEÇÃO NÃO CONFORME - CHAPA {chapa} - {nome_colab}"
-        corpo = f"""Segue os itens não conforme de chapa {chapa} - {nome_colab}
-
-CHAPA: {chapa}
-NOME: {nome_colab}
-CARGO: {dados_colab.get('cargo','')}
-SUPERVISOR: {supervisor_nome}
-COORDENADOR: {coordenador_nome}
-TELEFONE: {dados_colab.get('telefone','')}
-DATA: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}
-
-ITENS NÃO CONFORME ({len(lista_nao_conforme)}):
-"""
-        for r in lista_nao_conforme:
-            corpo += f"- {r['item']} | TAM: {r.get('tamanho','')} | FAB: {r.get('data_fab','')}\n"
+        corpo = f"CHAPA: {chapa}\nNOME: {nome_colab}\nSUPERVISOR: {supervisor_nome}\nCOORDENADOR: {coordenador_nome}\nTEL: {dados_colab.get('telefone','')}\n\nITENS NÃO CONFORME ({len(lista_nao_conforme)}):\n"
+        for r in lista_nao_conforme: corpo += f"- {r['item']} | TAM: {r.get('tamanho','')} | FAB: {r.get('data_fab','')}\n"
         corpo += "\nMÁSCARA COMPLETA EM ANEXO.\n\nSESMT - Telemont\n"
         msg = MIMEMultipart()
         msg['From'] = EMAIL_USER
@@ -290,9 +283,11 @@ ITENS NÃO CONFORME ({len(lista_nao_conforme)}):
 
 app_flask = Flask(__name__)
 @app_flask.route('/')
-def home(): return f"BOT SESMT ON - <a href='/base'>BASE</a> | <a href='/excel'>EXCEL</a> | <a href='/graficos'>GRAFICOS</a>"
+def home(): return f"BOT SESMT ON - <a href='/base'>BASE ESTATISTICA</a> | <a href='/excel'>EXCEL</a> | <a href='/graficos'>GRAFICOS</a>"
+
 @app_flask.route('/mascaras/<path:filename>')
 def masc(filename): return send_from_directory(PASTA_MASC, filename)
+
 @app_flask.route('/excel')
 def excel_route():
     filtro_sup = request.args.get('supervisor','').strip().upper()
@@ -301,6 +296,164 @@ def excel_route():
     if not caminho or not os.path.exists(caminho): return "Sem dados"
     nome = f"SESMT_{filtro_sup or 'TODOS'}_{filtro_ger or 'TODOS'}_{datetime.datetime.now().strftime('%d%m%Y_%H%M')}.xlsx"
     return send_file(caminho, as_attachment=True, download_name=nome)
+
+# ==== NOVA BASE ESTATISTICA ====
+@app_flask.route('/base')
+def base():
+    # Carrega feitos
+    feitos = set()
+    inspecoes_detalhe = {}
+    try:
+        with open(ARQ_INS, encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                ch = str(r.get('chapa','')).zfill(6)
+                feitos.add(ch)
+                if ch not in inspecoes_detalhe:
+                    inspecoes_detalhe[ch] = {'data':r.get('data',''),'nome':r.get('nome',''),'supervisor':r.get('supervisor',''),'coordenador':r.get('coordenador',''),'nao_conf':0}
+                if r.get('status')=='Não Conforme': inspecoes_detalhe[ch]['nao_conf']+=1
+    except: pass
+
+    justificados = get_justificados()
+
+    # Agrupa por supervisor
+    por_supervisor = defaultdict(list)
+    chapas_unicas = {}
+    for chapa_key, dados in FUNCIONARIOS.items():
+        # evita duplicata chapa com e sem zero
+        ch6 = chapa_key.zfill(6)
+        if len(ch6)!=6: continue
+        if ch6 in chapas_unicas: continue
+        chapas_unicas[ch6] = dados
+        sup = dados.get('supervisor','SEM SUPERVISOR')
+        por_supervisor[sup].append({'chapa':ch6, 'nome':dados.get('nome',''), 'cargo':dados.get('cargo','')})
+
+    # Monta HTML
+    html = """
+    <html><head><meta charset='utf-8'><title>BASE ESTATISTICA</title>
+    <style>
+    body{font-family:Arial;padding:15px;background:#f0f2f5}
+    .card{background:white;padding:15px;border-radius:10px;margin-bottom:20px;box-shadow:0 2px 5px rgba(0,0,0,0.1)}
+    table{width:100%;border-collapse:collapse;background:white;font-size:12px}
+    th,td{border:1px solid #ddd;padding:7px;text-align:left}
+    th{background:#0F4C8F;color:white}
+    .btn{padding:6px 12px;border-radius:5px;color:white;text-decoration:none;display:inline-block;font-size:12px}
+    .badge{padding:3px 8px;border-radius:10px;color:white;font-weight:bold}
+    h2{color:#0F4C8F}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(350px,1fr));gap:15px}
+    .stat{font-size:24px;font-weight:bold}
+    </style></head><body>
+    <h2>📊 ESTATÍSTICA POR SUPERVISOR - BASE SESMT</h2>
+    <a class='btn' style='background:green' href='/excel'>📥 EXCEL GERAL</a>
+    <a class='btn' style='background:#fd7e14' href='/graficos'>📈 GRAFICOS</a>
+    <a class='btn' style='background:#0F4C8F' href='/emails'>📧 EMAILS</a>
+    <br><br>
+    """
+
+    # RESUMO GERAL POR SUPERVISOR
+    html += "<div class='card'><h3>RESUMO GERAL</h3><table><tr><th>SUPERVISOR</th><th>TOTAL COLAB</th><th>FEITOS</th><th>JUSTIFICADOS</th><th>PENDENTES</th><th>% CONCLUÍDO</th><th>AÇÃO</th></tr>"
+    resumo_lista = []
+    for sup, lista_colab in sorted(por_supervisor.items()):
+        total = len(lista_colab)
+        feitos_sup = sum(1 for c in lista_colab if c['chapa'] in feitos)
+        just_sup = sum(1 for c in lista_colab if c['chapa'] in justificados)
+        pendentes = total - feitos_sup - just_sup
+        perc = int(((feitos_sup+just_sup)/total*100)) if total else 0
+        cor = "green" if perc>=100 else "orange" if perc>=50 else "red"
+        resumo_lista.append((sup,total,feitos_sup,just_sup,pendentes,perc))
+        html += f"<tr><td><b>{sup}</b></td><td style='text-align:center'>{total}</td><td style='text-align:center;color:green'><b>{feitos_sup}</b></td><td style='text-align:center;color:blue'><b>{just_sup}</b></td><td style='text-align:center;color:red'><b>{pendentes}</b></td><td><span class='badge' style='background:{cor}'>{perc}%</span></td><td><a class='btn' style='background:#0F4C8F' href='#sup_{sup.replace(' ','_')}'>Ver detalhes</a></td></tr>"
+    html += "</table></div>"
+
+    # DETALHAMENTO POR SUPERVISOR
+    for sup, lista_colab in sorted(por_supervisor.items()):
+        total = len(lista_colab)
+        feitos_sup = [c for c in lista_colab if c['chapa'] in feitos]
+        just_sup = [c for c in lista_colab if c['chapa'] in justificados]
+        pendentes_sup = [c for c in lista_colab if c['chapa'] not in feitos and c['chapa'] not in justificados]
+        html += f"<div class='card' id='sup_{sup.replace(' ','_')}'><h3>👷 {sup} - {total} colaboradores</h3>"
+        html += f"<div style='display:flex;gap:20px'><div>✅ Feitos: <b style='color:green'>{len(feitos_sup)}</b></div><div>📝 Justificados: <b style='color:blue'>{len(just_sup)}</b></div><div>⏳ Pendentes: <b style='color:red'>{len(pendentes_sup)}</b></div></div><br>"
+
+        if pendentes_sup:
+            html += "<h4>⏳ PENDENTES - Precisam fazer</h4><table><tr><th>CHAPA</th><th>NOME</th><th>CARGO</th><th>AÇÃO</th></tr>"
+            for c in pendentes_sup:
+                html += f"<tr><td><b>{c['chapa']}</b></td><td>{c['nome']}</td><td>{c['cargo']}</td><td><a class='btn' style='background:#ffc107;color:black' href='/justificar_form/{c['chapa']}'>📝 Justificar</a></td></tr>"
+            html += "</table><br>"
+
+        if feitos_sup:
+            html += "<h4>✅ FEITOS</h4><table><tr><th>CHAPA</th><th>NOME</th><th>DATA</th><th>NC</th><th>AÇÃO</th></tr>"
+            for c in feitos_sup:
+                det = inspecoes_detalhe.get(c['chapa'],{})
+                html += f"<tr><td>{c['chapa']}</td><td>{c['nome']}</td><td>{det.get('data','')}</td><td style='color:red'><b>{det.get('nao_conf',0)}</b></td><td><a class='btn' style='background:#0F4C8F' href='/detalhe/{c['chapa']}'>Ver</a> <a class='btn' style='background:#dc3545' href='/apagar/{c['chapa']}'>Excluir</a></td></tr>"
+            html += "</table><br>"
+
+        if just_sup:
+            html += "<h4>📝 JUSTIFICADOS - Contam como feito</h4><table><tr><th>CHAPA</th><th>NOME</th><th>MOTIVO</th><th>DATA JUST</th><th>AÇÃO</th></tr>"
+            for c in just_sup:
+                j = justificados.get(c['chapa'],{})
+                html += f"<tr><td>{c['chapa']}</td><td>{c['nome']}</td><td>{j.get('motivo','')}</td><td>{j.get('data','')}</td><td><a class='btn' style='background:#6c757d' href='/remover_just/{c['chapa']}'>Remover just</a></td></tr>"
+            html += "</table>"
+
+        html += "</div>"
+
+    html += "</body></html>"
+    return html
+
+@app_flask.route('/justificar_form/<chapa>')
+def justificar_form(chapa):
+    chapa = str(chapa).zfill(6)
+    dados = FUNCIONARIOS.get(chapa, {})
+    nome = dados.get('nome','')
+    sup = dados.get('supervisor','')
+    return f"""
+    <html><head><meta charset='utf-8'><title>Justificar</title>
+    <style>body{{font-family:Arial;padding:20px;background:#f0f2f5}} .card{{background:white;padding:20px;border-radius:10px;max-width:600px;margin:auto}} input,textarea,select{{width:100%;padding:10px;margin:10px 0}} .btn{{padding:10px 20px;background:#0F4C8F;color:white;border:none;border-radius:5px;cursor:pointer}}</style>
+    </head><body><div class='card'>
+    <h2>📝 Justificar Chapa {chapa}</h2>
+    <p><b>Nome:</b> {nome}<br><b>Supervisor:</b> {sup}</p>
+    <form method='post' action='/justificar/{chapa}'>
+        <label>Motivo da não realização:</label>
+        <select name='motivo' required>
+            <option value=''>Selecione...</option>
+            <option value='Férias'>Férias</option>
+            <option value='Afastado - INSS'>Afastado - INSS</option>
+            <option value='Afastado - Acidente'>Afastado - Acidente</option>
+            <option value='Desligado'>Desligado</option>
+            <option value='Transferido'>Transferido</option>
+            <option value='Falta'>Falta</option>
+            <option value='Licença'>Licença</option>
+            <option value='Outro'>Outro</option>
+        </select>
+        <textarea name='obs' placeholder='Observação opcional'></textarea>
+        <button class='btn' type='submit'>✅ Salvar Justificativa (contará como feito)</button>
+        <a href='/base' style='margin-left:10px'>Cancelar</a>
+    </form></div></body></html>
+    """
+
+@app_flask.route('/justificar/<chapa>', methods=['POST'])
+def justificar(chapa):
+    chapa = str(chapa).zfill(6)
+    dados = FUNCIONARIOS.get(chapa, {})
+    motivo = request.form.get('motivo','')
+    obs = request.form.get('obs','')
+    motivo_full = f"{motivo} - {obs}" if obs else motivo
+    data = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+    with open(ARQ_JUST, "a", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow([data, chapa, dados.get('nome',''), dados.get('supervisor',''), motivo_full])
+    return f"<script>alert('Chapa {chapa} justificada como FEITO!');window.location='/base';</script>"
+
+@app_flask.route('/remover_just/<chapa>')
+def remover_just(chapa):
+    chapa = str(chapa).zfill(6)
+    novas=[]
+    try:
+        with open(ARQ_JUST, encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                if str(r.get('chapa','')).zfill(6)!=chapa: novas.append(r)
+        with open(ARQ_JUST, "w", newline="", encoding="utf-8") as f:
+            w=csv.DictWriter(f, fieldnames=["data","chapa","nome","supervisor","motivo"])
+            w.writeheader(); w.writerows(novas)
+    except: pass
+    return f"<script>alert('Justificativa removida! Chapa volta para pendente');window.location='/base';</script>"
+
 @app_flask.route('/graficos')
 def graficos():
     filtro_sup = request.args.get('supervisor','').strip().upper()
@@ -349,7 +502,7 @@ def graficos():
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
     <style>body{{font-family:Arial;padding:20px;background:#f0f2f5}} .card{{background:white;padding:20px;border-radius:10px;margin-bottom:20px}} h2{{color:#0F4C8F}} table{{border-collapse:collapse;width:100%}} th,td{{border:1px solid #ddd;padding:8px;font-size:13px}} th{{background:#0F4C8F;color:white}} .chart-wrap{{height:400px}} select{{padding:8px;min-width:280px}} .btn{{padding:8px 14px;border-radius:5px;color:white;background:#0F4C8F;text-decoration:none}} .btn-green{{background:green}}</style></head><body>
-    <h2>📊 DASHBOARD SESMT</h2><a href='/base'>BASE</a> | <a href='/emails'>EMAILS</a>
+    <h2>📊 DASHBOARD SESMT</h2><a href='/base'>BASE ESTATISTICA</a> | <a href='/emails'>EMAILS</a>
     <div class='card' style='background:#e8f0fe;border:2px solid #0F4C8F'>
         <form method='get' style='display:flex;gap:15px;flex-wrap:wrap'><div><b>SUPERVISOR:</b><br><select name='supervisor'><option value=''>-- TODOS --</option>{options_sup}</select></div><div><b>GERENTE:</b><br><select name='gerente'><option value=''>-- TODOS --</option>{options_ger}</select></div><div><br><button class='btn'>🔍 FILTRAR</button> <a href='/graficos' class='btn' style='background:#6c757d'>Limpar</a> <a href='/excel?supervisor={filtro_sup}&gerente={filtro_ger}' class='btn btn-green'>📥 EXCEL FILTRO</a></div></form><div style='margin-top:10px;color:#0F4C8F;font-weight:bold'>{filtro_txt}</div>
     </div>
@@ -367,25 +520,9 @@ def graficos():
 
 @app_flask.route('/emails')
 def ver_emails():
-    html="<h2>Emails</h2><a href='/graficos'>Voltar</a><br><br><table border=1 cellpadding=8><tr><th>NOME</th><th>EMAIL</th></tr>"
+    html="<h2>Emails</h2><a href='/graficos'>Voltar</a> | <a href='/base'>BASE</a><br><br><table border=1 cellpadding=8><tr><th>NOME</th><th>EMAIL</th></tr>"
     for n,e in sorted(EMAILS_SUP.items()): html+=f"<tr><td>{n}</td><td>{e}</td></tr>"
     html+="</table>"
-    return html
-
-@app_flask.route('/base')
-def base():
-    html = "<html><head><meta charset='utf-8'><title>BASE</title><style>body{font-family:Arial;padding:15px;background:#f0f2f5} table{width:100%;border-collapse:collapse;background:white;font-size:11px} th,td{border:1px solid #ddd;padding:6px} th{background:#0F4C8F;color:white} .btn{padding:5px 10px;border-radius:4px;color:white;text-decoration:none}</style></head><body><h2>BASE</h2><a class='btn' style='background:green' href='/excel'>EXCEL</a> <a class='btn' style='background:#fd7e14' href='/graficos'>GRAFICOS</a><br><br><table><tr><th>DATA</th><th>CHAPA</th><th>NOME</th><th>SUP</th><th>COORD</th><th>NC</th><th>AÇÃO</th></tr>"
-    try:
-        inspecoes={}
-        with open(ARQ_INS, encoding="utf-8") as f:
-            for r in csv.DictReader(f):
-                ch=r.get('chapa','')
-                if ch not in inspecoes: inspecoes[ch]={'data':r.get('data',''),'nome':r.get('nome',''),'supervisor':r.get('supervisor',''),'coordenador':r.get('coordenador',''),'nao_conf':0}
-                if r.get('status')=='Não Conforme': inspecoes[ch]['nao_conf']+=1
-        for ch,d in inspecoes.items():
-            html+=f"<tr><td>{d['data']}</td><td><b>{ch}</b></td><td>{d['nome']}</td><td>{d['supervisor']}</td><td>{d['coordenador']}</td><td style='color:red'><b>{d['nao_conf']}</b></td><td><a class='btn' style='background:#0F4C8F' href='/detalhe/{ch}'>Ver</a> <a class='btn' style='background:#dc3545' href='/apagar/{ch}'>Excluir</a></td></tr>"
-    except Exception as e: html+=str(e)
-    html+="</table></body></html>"
     return html
 
 @app_flask.route('/detalhe/<chapa>')
@@ -431,7 +568,15 @@ async def chapa_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chapa=update.message.text.strip().zfill(6); func=buscar_func(chapa)
     if not func: func=buscar_func(update.message.text.strip())
     if not func: await update.message.reply_text(f"❌ Chapa {chapa} não existe."); return CHAPA
-    if ja_inspecionou(chapa): kb = ReplyKeyboardMarkup([[KeyboardButton("🔄 NOVA INSPEÇÃO - /start")]], resize_keyboard=True); await update.message.reply_text(f"⛔ Chapa {chapa} já fez inspeção!", reply_markup=kb); return ConversationHandler.END
+    if ja_inspecionou(chapa): 
+        kb = ReplyKeyboardMarkup([[KeyboardButton("🔄 NOVA INSPEÇÃO - /start")]], resize_keyboard=True)
+        await update.message.reply_text(f"⛔ Chapa {chapa} já fez inspeção!", reply_markup=kb)
+        return ConversationHandler.END
+    just = get_justificados()
+    if chapa in just:
+        kb = ReplyKeyboardMarkup([[KeyboardButton("🔄 NOVA INSPEÇÃO - /start")]], resize_keyboard=True)
+        await update.message.reply_text(f"⛔ Chapa {chapa} está JUSTIFICADA ({just[chapa].get('motivo')}) e conta como feito!", reply_markup=kb)
+        return ConversationHandler.END
     context.user_data['chapa']=chapa; context.user_data['func']=func
     cad=buscar_cadastro(chapa)
     if cad and cad.get('telefone'):
@@ -541,40 +686,30 @@ async def status_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await proximo_item(update, context)
 
 async def finalizar(update, context):
-    # === MENSAGEM DE AGUARDANDO ===
     await update.message.reply_text("⏳ AGUARDANDO... Criando máscara de Não Conforme e enviando e-mail para o supervisor...\nIsso pode levar alguns segundos...")
     try:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     except: pass
-
     chapa=context.user_data['chapa']; func=context.user_data['func']; tel=context.user_data['telefone']; eh_mot=context.user_data['eh_motorista']
     resultados=context.user_data['resultados']; nao_conf=context.user_data['nao_conforme_lista']
     data_hora=datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
-
     with open(ARQ_INS, "a", newline="", encoding="utf-8") as f:
         w=csv.writer(f)
         for r in resultados: w.writerow([data_hora, chapa, func['nome'], func['cargo'], func['supervisor'], func['coordenador'], tel, eh_mot, r['item'], r['tamanho'], r['data_fab'], r['validade'], r['status']])
-
     dados_colab={"chapa":chapa,"nome":func['nome'],"cargo":func['cargo'],"data_admissao":func['admissao'],"supervisor":func['supervisor'],"coordenador":func['coordenador'],"telefone":tel,"eh_motorista":eh_mot}
-
     caminho_txt, txt_conteudo = gerar_mascara_txt(dados_colab, nao_conf)
-
     with open(ARQ_PEDIDOS, "a", newline="", encoding="utf-8") as f: csv.writer(f).writerow([data_hora, chapa, func['nome'], tel, func['supervisor'], txt_conteudo.replace("\n"," | ")])
-
     enviado=False; dest=[]
     if nao_conf:
-        try:
-            await update.message.reply_text(f"📧 Enviando e-mail para supervisor {func['supervisor']} ({EMAILS_SUP.get(func['supervisor'].upper(),'')})...")
+        try: await update.message.reply_text(f"📧 Enviando e-mail para supervisor {func['supervisor']} ({EMAILS_SUP.get(func['supervisor'].upper(),'')})...")
         except: pass
         enviado, dest = enviar_email_nao_conforme(func['supervisor'], func['coordenador'], chapa, func['nome'], nao_conf, caminho_txt, dados_colab)
-
     msg=f"✅ INSPEÇÃO FINALIZADA!\n\nCHAPA: {chapa}\nNOME: {func['nome']}\nNÃO CONFORME: {len(nao_conf)}\n\n📋 MÁSCARA GERADA:\n{txt_conteudo}"
     if enviado: msg+=f"\n\n📧 E-mail enviado para SUPERVISOR: {', '.join(dest)}"
     elif nao_conf: msg+=f"\n\n⚠️ E-mail não enviado - verifique variáveis no Render"
-
     await update.message.reply_text(msg)
     if os.path.exists(caminho_txt):
-        await context.bot.send_document(chat_id=update.effective_chat.id, document=open(caminho_txt, "rb"), filename=os.path.basename(caminho_txt), caption="📄 MÁSCARA TXT COMPLETA - Não Conforme")
+        await context.bot.send_document(chat_id=update.effective_chat.id, document=open(caminho_txt, "rb"), filename=os.path.basename(caminho_txt), caption="📄 MÁSCARA TXT COMPLETA")
     kb = ReplyKeyboardMarkup([[KeyboardButton("🔄 NOVA INSPEÇÃO - /start")]], resize_keyboard=True)
     await update.message.reply_text("👇 Para nova inspeção clique em /start:", reply_markup=kb)
     return ConversationHandler.END
