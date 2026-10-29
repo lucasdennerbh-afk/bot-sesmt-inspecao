@@ -220,62 +220,84 @@ def graficos():
     cont_item = Counter([r.get('item','') for r in df_nc])
     cont_sup = Counter([r.get('supervisor','') for r in df_nc])
     
-    # SOMA POR TAMANHO - SÓ NÃO CONFORME (GG 2, 40 5)
     cont_tamanho = Counter()
     cont_item_tamanho = defaultdict(Counter)
+    cont_sup_item = defaultdict(Counter)
     for r in df_nc:
         tam = r.get('tamanho','').strip().upper()
         item = r.get('item','')
+        sup = r.get('supervisor','')
         if tam and tam != "":
             cont_tamanho[tam] += 1
             cont_item_tamanho[item][tam] += 1
+        if sup:
+            cont_sup_item[sup][item] += 1
 
     top_itens = cont_item.most_common(15)
     labels_itens = [x[0] for x in top_itens]
     values_itens = [x[1] for x in top_itens]
-    labels_sup = list(cont_sup.keys())[:10]
-    values_sup = list(cont_sup.values())[:10]
+    top_sup = cont_sup.most_common(15)
+    labels_sup = [x[0] for x in top_sup]
+    values_sup = [x[1] for x in top_sup]
 
-    tabela_tamanhos = ""
-    for tam, qtd in cont_tamanho.most_common():
-        tabela_tamanhos += f"<tr><td><b>{tam}</b></td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>"
-    
-    tabela_item_tamanho = ""
-    for item, counter in cont_item_tamanho.items():
-        for tam, qtd in counter.most_common():
-            tabela_item_tamanho += f"<tr><td>{item}</td><td><b>{tam}</b></td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>"
+    tabela_tamanhos = "".join([f"<tr><td><b>{tam}</b></td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for tam,qtd in cont_tamanho.most_common()])
+    tabela_item_tamanho = "".join([f"<tr><td>{item}</td><td><b>{tam}</b></td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for item, counter in cont_item_tamanho.items() for tam,qtd in counter.most_common()])
+    tabela_sup = "".join([f"<tr><td><b>{sup}</b></td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for sup,qtd in cont_sup.most_common()])
+    tabela_sup_detalhada = "".join([f"<tr><td>{sup}</td><td>{item}</td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for sup, counter in cont_sup_item.items() for item,qtd in counter.most_common()])
 
     html = f"""
     <html><head><meta charset='utf-8'><title>GRÁFICOS SESMT</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
     <style>body{{font-family:Arial;padding:20px;background:#f0f2f5}} .card{{background:white;padding:20px;border-radius:10px;margin-bottom:20px;box-shadow:0 2px 5px #ccc}} h2{{color:#0F4C8F}} table{{border-collapse:collapse;width:100%}} th,td{{border:1px solid #ddd;padding:8px;font-size:13px}} th{{background:#0F4C8F;color:white}}</style></head><body>
     <h2>📊 DASHBOARD SESMT - NÃO CONFORME</h2>
     <a href='/base'>BASE</a> | <a href='/excel'>BAIXAR EXCEL</a> | <a href='/graficos'>ATUALIZAR</a>
-    <div style='display:flex;gap:20px;flex-wrap:wrap'>
+    <div style='display:flex;gap:20px;flex-wrap:wrap;margin-top:20px'>
     <div class='card' style='flex:2;min-width:400px'><h3>Total Não Conforme por Item (Top 15)</h3><canvas id='chartItens'></canvas></div>
-    <div class='card' style='flex:1;min-width:300px'><h3>Por Supervisor</h3><canvas id='chartSup'></canvas></div>
+    <div class='card' style='flex:1;min-width:400px'><h3>Total Não Conforme por Supervisor</h3><canvas id='chartSup'></canvas></div>
     </div>
     <div style='display:flex;gap:20px;flex-wrap:wrap'>
-    <div class='card' style='flex:1;min-width:320px'><h3>📏 SOMA POR TAMANHO - SÓ NÃO CONFORME</h3><p style='font-size:12px;color:#666'>Ex: GG 2, 40 5 - Apenas itens com tamanho informado e status Não Conforme</p>
-    <table><tr><th>TAMANHO</th><th>QTD NÃO CONFORME</th></tr>
-    {tabela_tamanhos if tabela_tamanhos else "<tr><td colspan=2>Nenhum tamanho não conforme</td></tr>"}
-    </table></div>
-    <div class='card' style='flex:1;min-width:400px'><h3>📦 Detalhado: Item + Tamanho Não Conforme</h3>
-    <table><tr><th>ITEM</th><th>TAMANHO</th><th>QTD</th></tr>
-    {tabela_item_tamanho if tabela_item_tamanho else "<tr><td colspan=3>Nenhum</td></tr>"}
-    </table></div>
+    <div class='card' style='flex:1;min-width:300px'><h3>📏 SOMA POR TAMANHO - SÓ NÃO CONFORME (GG 2, 40 5)</h3>
+    <table><tr><th>TAMANHO</th><th>QTD</th></tr>{tabela_tamanhos or "<tr><td colspan=2>Nenhum</td></tr>"}</table></div>
+    <div class='card' style='flex:1;min-width:320px'><h3>👷 SOMA POR SUPERVISOR</h3>
+    <table><tr><th>SUPERVISOR</th><th>QTD NÃO CONFORME</th></tr>{tabela_sup or "<tr><td colspan=2>Nenhum</td></tr>"}</table><br>
+    <h4>Detalhado: Supervisor x Item</h4>
+    <table><tr><th>SUPERVISOR</th><th>ITEM</th><th>QTD</th></tr>{tabela_sup_detalhada or "<tr><td colspan=3>Nenhum</td></tr>"}</table>
+    </div>
+    <div class='card' style='flex:1;min-width:400px'><h3>📦 Item + Tamanho Não Conforme</h3>
+    <table><tr><th>ITEM</th><th>TAMANHO</th><th>QTD</th></tr>{tabela_item_tamanho or "<tr><td colspan=3>Nenhum</td></tr>"}</table></div>
     </div>
     <div class='card'><h3>Resumo por Item</h3>
-    <p>Total inspeções: {len(linhas)} registros | Total Não Conforme: {len(df_nc)}</p>
-    <table><tr><th>Item</th><th>Qtd Não Conforme</th></tr>
-    {''.join([f"<tr><td>{k}</td><td><b>{v}</b></td></tr>" for k,v in cont_item.most_common()])}
-    </table>
+    <p>Total registros: {len(linhas)} | Total Não Conforme: {len(df_nc)}</p>
+    <table><tr><th>Item</th><th>Qtd Não Conforme</th></tr>{''.join([f"<tr><td>{k}</td><td><b>{v}</b></td></tr>" for k,v in cont_item.most_common()])}</table>
     </div>
     <script>
+    Chart.register(ChartDataLabels);
     const ctx1 = document.getElementById('chartItens').getContext('2d');
-    new Chart(ctx1, {{type:'bar', data:{{labels:{json.dumps(labels_itens)}, datasets:[{{label:'Qtd Não Conforme', data:{json.dumps(values_itens)}, backgroundColor:'#0F4C8F'}}]}}, options:{{indexAxis:'y'}}}});
+    new Chart(ctx1, {{
+        type:'bar',
+        data:{{labels:{json.dumps(labels_itens)}, datasets:[{{label:'Qtd Não Conforme', data:{json.dumps(values_itens)}, backgroundColor:'#0F4C8F'}}]}},
+        options:{{
+            indexAxis:'y',
+            plugins:{{
+                datalabels:{{anchor:'end', align:'right', color:'#000', font:{{weight:'bold', size:13}}, formatter: (value) => value}},
+                legend:{{display:false}}
+            }},
+            scales:{{x:{{beginAtZero:true, ticks:{{stepSize:1}}}}}}
+    }});
     const ctx2 = document.getElementById('chartSup').getContext('2d');
-    new Chart(ctx2, {{type:'pie', data:{{labels:{json.dumps(labels_sup)}, datasets:[{{data:{json.dumps(values_sup)}, backgroundColor:['#0F4C8F','#FFCC00','#28a745','#dc3545','#fd7e14','#6f42c1','#20c997','#6610f2','#e83e8c','#17a2b8']}}]}}}});
+    new Chart(ctx2, {{
+        type:'bar',
+        data:{{labels:{json.dumps(labels_sup)}, datasets:[{{label:'Qtd Não Conforme', data:{json.dumps(values_sup)}, backgroundColor:'#FFCC00'}}]}},
+        options:{{
+            indexAxis:'y',
+            plugins:{{
+                datalabels:{{anchor:'end', align:'right', color:'#000', font:{{weight:'bold', size:13}}, formatter: (value) => value}},
+                legend:{{display:false}}
+            }},
+            scales:{{x:{{beginAtZero:true, ticks:{{stepSize:1}}}}}}
+        }}
+    }});
     </script>
     </body></html>
     """
