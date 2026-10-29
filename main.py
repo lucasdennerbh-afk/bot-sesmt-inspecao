@@ -149,42 +149,29 @@ ITENS NÃO CONFORME:
     with open(caminho, "w", encoding="utf-8") as f: f.write(txt)
     return caminho, txt
 
-# ================= NOVO: GERAR EXCEL COMPLETO =================
 def gerar_excel_completo(caminho="/tmp/sesmt_completo.xlsx"):
     try:
         import pandas as pd
-        from openpyxl import Workbook
     except:
         return None
-    
     linhas=[]
     try:
         with open(ARQ_INS, encoding="utf-8") as f:
             for r in csv.DictReader(f):
                 linhas.append(r)
     except: linhas=[]
-    
     if not linhas:
         return None
-    
-    # DataFrame
-    import pandas as pd
     df = pd.DataFrame(linhas)
-    
-    # --- ABA 1: RESUMO NÃO CONFORME ---
     df_nc = df[df['status']=='Não Conforme']
     resumo = df_nc.groupby('item').size().reset_index(name='QTD_NAO_CONFORME')
     resumo = resumo.sort_values('QTD_NAO_CONFORME', ascending=False)
-    
-    # --- ABA 2: TAMANHOS SEPARADOS ---
     def extrair_tamanho_qtd(valor):
-        # valor tipo "QTD 2 - Utilitário" ou "40" ou "G"
         tamanho=""
         quantidade=""
         tipo_veiculo=""
         if not valor: return tamanho, quantidade, tipo_veiculo
         v=str(valor).upper()
-        # pega numero
         import re
         nums=re.findall(r'\d+', v)
         if "QTD" in v and nums:
@@ -198,13 +185,9 @@ def gerar_excel_completo(caminho="/tmp/sesmt_completo.xlsx"):
             tamanho=valor
             if nums: quantidade=nums[0] if "QTD" not in v else nums[0]
         return tamanho, quantidade, tipo_veiculo
-    
     df_tam = df.copy()
     df_tam[['TAMANHO_COL','QUANTIDADE_COL','TIPO_VEICULO']] = df_tam['tamanho'].apply(lambda x: pd.Series(extrair_tamanho_qtd(x)))
-    
-    # --- ABA 3: RESUMO POR SUPERVISOR ---
     resumo_sup = df_nc.groupby(['supervisor','item']).size().reset_index(name='QTD')
-    
     with pd.ExcelWriter(caminho, engine='openpyxl') as writer:
         resumo.to_excel(writer, sheet_name='RESUMO_NAO_CONFORME', index=False)
         df.to_excel(writer, sheet_name='DETALHADO_COMPLETO', index=False)
@@ -218,7 +201,6 @@ app_flask = Flask(__name__)
 def home(): return "BOT SESMT ON - <a href='/base'>BASE</a> | <a href='/excel'>EXCEL COMPLETO</a> | <a href='/graficos'>GRAFICOS</a>"
 @app_flask.route('/mascaras/<path:filename>')
 def masc(filename): return send_from_directory(PASTA_MASC, filename)
-
 @app_flask.route('/excel')
 def excel_route():
     caminho = gerar_excel_completo()
@@ -234,34 +216,58 @@ def graficos():
             for r in csv.DictReader(f):
                 linhas.append(r)
     except: linhas=[]
-    
     df_nc = [r for r in linhas if r.get('status')=='Não Conforme']
     cont_item = Counter([r.get('item','') for r in df_nc])
     cont_sup = Counter([r.get('supervisor','') for r in df_nc])
-    cont_tam = Counter([r.get('tamanho','') for r in df_nc if r.get('tamanho')])
     
-    # Top 15 itens
+    # SOMA POR TAMANHO - SÓ NÃO CONFORME (GG 2, 40 5)
+    cont_tamanho = Counter()
+    cont_item_tamanho = defaultdict(Counter)
+    for r in df_nc:
+        tam = r.get('tamanho','').strip().upper()
+        item = r.get('item','')
+        if tam and tam != "":
+            cont_tamanho[tam] += 1
+            cont_item_tamanho[item][tam] += 1
+
     top_itens = cont_item.most_common(15)
     labels_itens = [x[0] for x in top_itens]
     values_itens = [x[1] for x in top_itens]
-    
     labels_sup = list(cont_sup.keys())[:10]
     values_sup = list(cont_sup.values())[:10]
+
+    tabela_tamanhos = ""
+    for tam, qtd in cont_tamanho.most_common():
+        tabela_tamanhos += f"<tr><td><b>{tam}</b></td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>"
     
+    tabela_item_tamanho = ""
+    for item, counter in cont_item_tamanho.items():
+        for tam, qtd in counter.most_common():
+            tabela_item_tamanho += f"<tr><td>{item}</td><td><b>{tam}</b></td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>"
+
     html = f"""
     <html><head><meta charset='utf-8'><title>GRÁFICOS SESMT</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <style>body{{font-family:Arial;padding:20px;background:#f0f2f5}} .card{{background:white;padding:20px;border-radius:10px;margin-bottom:20px;box-shadow:0 2px 5px #ccc}} h2{{color:#0F4C8F}}</style></head><body>
+    <style>body{{font-family:Arial;padding:20px;background:#f0f2f5}} .card{{background:white;padding:20px;border-radius:10px;margin-bottom:20px;box-shadow:0 2px 5px #ccc}} h2{{color:#0F4C8F}} table{{border-collapse:collapse;width:100%}} th,td{{border:1px solid #ddd;padding:8px;font-size:13px}} th{{background:#0F4C8F;color:white}}</style></head><body>
     <h2>📊 DASHBOARD SESMT - NÃO CONFORME</h2>
     <a href='/base'>BASE</a> | <a href='/excel'>BAIXAR EXCEL</a> | <a href='/graficos'>ATUALIZAR</a>
     <div style='display:flex;gap:20px;flex-wrap:wrap'>
     <div class='card' style='flex:2;min-width:400px'><h3>Total Não Conforme por Item (Top 15)</h3><canvas id='chartItens'></canvas></div>
     <div class='card' style='flex:1;min-width:300px'><h3>Por Supervisor</h3><canvas id='chartSup'></canvas></div>
     </div>
-    <div class='card'><h3>Resumo</h3>
+    <div style='display:flex;gap:20px;flex-wrap:wrap'>
+    <div class='card' style='flex:1;min-width:320px'><h3>📏 SOMA POR TAMANHO - SÓ NÃO CONFORME</h3><p style='font-size:12px;color:#666'>Ex: GG 2, 40 5 - Apenas itens com tamanho informado e status Não Conforme</p>
+    <table><tr><th>TAMANHO</th><th>QTD NÃO CONFORME</th></tr>
+    {tabela_tamanhos if tabela_tamanhos else "<tr><td colspan=2>Nenhum tamanho não conforme</td></tr>"}
+    </table></div>
+    <div class='card' style='flex:1;min-width:400px'><h3>📦 Detalhado: Item + Tamanho Não Conforme</h3>
+    <table><tr><th>ITEM</th><th>TAMANHO</th><th>QTD</th></tr>
+    {tabela_item_tamanho if tabela_item_tamanho else "<tr><td colspan=3>Nenhum</td></tr>"}
+    </table></div>
+    </div>
+    <div class='card'><h3>Resumo por Item</h3>
     <p>Total inspeções: {len(linhas)} registros | Total Não Conforme: {len(df_nc)}</p>
-    <p><b>Itens com tamanho/quantidade separados no Excel na aba TAMANHOS_SEPARADOS</b></p>
-    <table border=1 cellpadding=5><tr><th>Item</th><th>Qtd Não Conforme</th></tr>
+    <table><tr><th>Item</th><th>Qtd Não Conforme</th></tr>
     {''.join([f"<tr><td>{k}</td><td><b>{v}</b></td></tr>" for k,v in cont_item.most_common()])}
     </table>
     </div>
