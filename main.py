@@ -209,7 +209,6 @@ def gerar_excel_completo(caminho="/tmp/sesmt_completo.xlsx", filtro_supervisor="
         df_nc.to_excel(writer, sheet_name='SO_NAO_CONFORME', index=False)
         resumo_sup.to_excel(writer, sheet_name='POR_SUPERVISOR', index=False)
         resumo_coord.to_excel(writer, sheet_name='POR_GERENTE', index=False)
-        pd.DataFrame([{"supervisor":k, "email":v} for k,v in EMAILS_SUP.items()]).to_excel(writer, sheet_name='EMAILS_SUPERVISORES', index=False)
     return caminho
 
 def enviar_email_nao_conforme(supervisor_nome, coordenador_nome, chapa, nome_colab, lista_nao_conforme, caminho_txt, dados_colab):
@@ -229,23 +228,21 @@ def enviar_email_nao_conforme(supervisor_nome, coordenador_nome, chapa, nome_col
         EMAIL_PASS = os.environ.get("EMAIL_PASS", "tcepcskwinxlfnsk")
         SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
         SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
-        if not EMAIL_USER or not EMAIL_PASS: return False, []
         assunto = f"INSPEÇÃO NÃO CONFORME - CHAPA {chapa} - {nome_colab}"
         corpo = f"""Segue os itens não conforme de chapa {chapa} - {nome_colab}
 
 CHAPA: {chapa}
 NOME: {nome_colab}
-CARGO: {dados_colab.get('cargo','')}
 SUPERVISOR: {supervisor_nome}
 COORDENADOR: {coordenador_nome}
-TELEFONE: {dados_colab.get('telefone','')}
+TEL: {dados_colab.get('telefone','')}
 DATA: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}
 
 ITENS NÃO CONFORME ({len(lista_nao_conforme)}):
 """
         for r in lista_nao_conforme:
             corpo += f"- {r['item']} | TAM: {r.get('tamanho','')} | FAB: {r.get('data_fab','')}\n"
-        corpo += "\nMÁSCARA COMPLETA EM ANEXO.\n\nSESMT - Telemont\n"
+        corpo += "\nMÁSCARA EM ANEXO.\n\nSESMT - Telemont\n"
         msg = MIMEMultipart()
         msg['From'] = EMAIL_USER
         msg['To'] = ", ".join(emails_destino)
@@ -270,7 +267,7 @@ ITENS NÃO CONFORME ({len(lista_nao_conforme)}):
 
 app_flask = Flask(__name__)
 @app_flask.route('/')
-def home(): return f"BOT SESMT ON - <a href='/base'>BASE</a> | <a href='/excel'>EXCEL</a> | <a href='/graficos'>GRAFICOS</a> | Emails: {len(EMAILS_SUP)}"
+def home(): return f"BOT SESMT ON - <a href='/base'>BASE</a> | <a href='/excel'>EXCEL</a> | <a href='/graficos'>GRAFICOS</a>"
 
 @app_flask.route('/mascaras/<path:filename>')
 def masc(filename): return send_from_directory(PASTA_MASC, filename)
@@ -278,7 +275,7 @@ def masc(filename): return send_from_directory(PASTA_MASC, filename)
 @app_flask.route('/excel')
 def excel_route():
     filtro_sup = request.args.get('supervisor','').strip().upper()
-    filtro_ger = request.args.get('gerente','').strip().upper() or request.args.get('coordenador','').strip().upper()
+    filtro_ger = request.args.get('gerente','').strip().upper()
     caminho = gerar_excel_completo(filtro_supervisor=filtro_sup, filtro_gerente=filtro_ger)
     if not caminho or not os.path.exists(caminho): return "Sem dados para este filtro"
     nome = f"SESMT_{filtro_sup or 'TODOS'}_{filtro_ger or 'TODOS'}_{datetime.datetime.now().strftime('%d%m%Y_%H%M')}.xlsx"
@@ -287,7 +284,7 @@ def excel_route():
 @app_flask.route('/graficos')
 def graficos():
     filtro_sup = request.args.get('supervisor','').strip().upper()
-    filtro_ger = request.args.get('gerente','').strip().upper() or request.args.get('coordenador','').strip().upper()
+    filtro_ger = request.args.get('gerente','').strip().upper()
     linhas=[]
     try:
         with open(ARQ_INS, encoding="utf-8") as f:
@@ -326,95 +323,54 @@ def graficos():
     for r in df_nc:
         cont_item_tam[r.get('item','')][r.get('tamanho','')] += 1
     tabela_item_tamanho = "".join([f"<tr><td>{item}</td><td><b>{tam}</b></td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for item, c in cont_item_tam.items() for tam,qtd in c.most_common() if tam])
-    filtro_txt = f"FILTRO ATIVO: Supervisor={filtro_sup or 'TODOS'} | Gerente={filtro_ger or 'TODOS'} - Total Não Conforme: {len(df_nc)}" if filtro_sup or filtro_ger else f"SEM FILTRO - Total Não Conforme: {len(df_nc)}"
+    filtro_txt = f"FILTRO: Sup={filtro_sup or 'TODOS'} | Ger={filtro_ger or 'TODOS'} - Total: {len(df_nc)}" if filtro_sup or filtro_ger else f"SEM FILTRO - Total: {len(df_nc)}"
     html = f"""
-    <html><head><meta charset='utf-8'><title>GRÁFICOS SESMT</title>
+    <html><head><meta charset='utf-8'><title>GRÁFICOS</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
-    <style>
-    body{{font-family:Arial;padding:20px;background:#f0f2f5}} 
-    .card{{background:white;padding:20px;border-radius:10px;margin-bottom:20px;box-shadow:0 2px 5px #ccc}} 
-    h2{{color:#0F4C8F}} 
-    table{{border-collapse:collapse;width:100%}} th,td{{border:1px solid #ddd;padding:8px;font-size:13px}} th{{background:#0F4C8F;color:white}}
-    .chart-wrap{{position:relative;height:400px}}
-    select{{padding:8px;border-radius:5px;border:1px solid #ccc;min-width:280px}}
-    .btn{{padding:8px 14px;border-radius:5px;text-decoration:none;color:white;background:#0F4C8F;border:none;cursor:pointer}}
-    .btn-green{{background:green}}
-    </style></head><body>
-    <h2>📊 DASHBOARD SESMT - NÃO CONFORME</h2>
-    <a href='/base'>BASE</a> | <a href='/emails'>VER EMAILS</a>
+    <style>body{{font-family:Arial;padding:20px;background:#f0f2f5}} .card{{background:white;padding:20px;border-radius:10px;margin-bottom:20px}} h2{{color:#0F4C8F}} table{{border-collapse:collapse;width:100%}} th,td{{border:1px solid #ddd;padding:8px;font-size:13px}} th{{background:#0F4C8F;color:white}} .chart-wrap{{height:400px}} select{{padding:8px;min-width:280px}} .btn{{padding:8px 14px;border-radius:5px;color:white;background:#0F4C8F;text-decoration:none}} .btn-green{{background:green}}</style></head><body>
+    <h2>📊 DASHBOARD SESMT</h2><a href='/base'>BASE</a> | <a href='/emails'>EMAILS</a>
     <div class='card' style='background:#e8f0fe;border:2px solid #0F4C8F'>
-        <form method='get' style='display:flex;gap:15px;flex-wrap:wrap;align-items:end'>
-            <div><label><b>SUPERVISOR:</b></label><br><select name='supervisor'><option value=''>-- TODOS --</option>{options_sup}</select></div>
-            <div><label><b>GERENTE / COORDENADOR:</b></label><br><select name='gerente'><option value=''>-- TODOS --</option>{options_ger}</select></div>
-            <div><button type='submit' class='btn'>🔍 FILTRAR</button> <a href='/graficos' class='btn' style='background:#6c757d'>Limpar</a></div>
-            <div><a href='/excel?supervisor={filtro_sup}&gerente={filtro_ger}' class='btn btn-green'>📥 BAIXAR EXCEL DO FILTRO</a></div>
-        </form>
-        <div style='margin-top:10px;color:#0F4C8F;font-weight:bold'>{filtro_txt}</div>
+        <form method='get' style='display:flex;gap:15px;flex-wrap:wrap'><div><b>SUPERVISOR:</b><br><select name='supervisor'><option value=''>-- TODOS --</option>{options_sup}</select></div><div><b>GERENTE:</b><br><select name='gerente'><option value=''>-- TODOS --</option>{options_ger}</select></div><div><br><button class='btn'>🔍 FILTRAR</button> <a href='/graficos' class='btn' style='background:#6c757d'>Limpar</a> <a href='/excel?supervisor={filtro_sup}&gerente={filtro_ger}' class='btn btn-green'>📥 EXCEL FILTRO</a></div></form><div style='margin-top:10px;color:#0F4C8F;font-weight:bold'>{filtro_txt}</div>
     </div>
-    <div style='display:flex;gap:20px;flex-wrap:wrap'>
-      <div class='card' style='flex:2;min-width:500px'><h3>Não Conforme por Item (Top 15)</h3><div class='chart-wrap'><canvas id='chartItens'></canvas></div></div>
-      <div class='card' style='flex:1;min-width:400px'><h3>Por Supervisor</h3><div class='chart-wrap'><canvas id='chartSup'></canvas></div></div>
-      <div class='card' style='flex:1;min-width:400px'><h3>Por Gerente</h3><div class='chart-wrap'><canvas id='chartGer'></canvas></div></div>
-    </div>
-    <div style='display:flex;gap:20px;flex-wrap:wrap'>
-      <div class='card' style='flex:1;min-width:380px'>
-        <h3>👷 SOMA POR SUPERVISOR (filtrado)</h3>
-        <table><tr><th>SUPERVISOR</th><th>EMAIL</th><th>QTD</th></tr>{tabela_sup or "<tr><td colspan=3>Nenhum</td></tr>"}</table><br>
-        <h4>Detalhado: Supervisor x Item</h4>
-        <table><tr><th>SUPERVISOR</th><th>ITEM</th><th>QTD</th></tr>{tabela_sup_detalhada or "<tr><td colspan=3>Nenhum</td></tr>"}</table>
-      </div>
-      <div class='card' style='flex:1;min-width:400px'>
-        <h3>📦 Item + Tamanho Não Conforme</h3>
-        <table><tr><th>ITEM</th><th>TAMANHO</th><th>QTD</th></tr>{tabela_item_tamanho or "<tr><td colspan=3>Nenhum</td></tr>"}</table>
-      </div>
-    </div>
+    <div style='display:flex;gap:20px;flex-wrap:wrap'><div class='card' style='flex:2;min-width:500px'><h3>Por Item</h3><div class='chart-wrap'><canvas id='chartItens'></canvas></div></div><div class='card' style='flex:1;min-width:400px'><h3>Por Supervisor</h3><div class='chart-wrap'><canvas id='chartSup'></canvas></div></div><div class='card' style='flex:1;min-width:400px'><h3>Por Gerente</h3><div class='chart-wrap'><canvas id='chartGer'></canvas></div></div></div>
+    <div style='display:flex;gap:20px;flex-wrap:wrap'><div class='card' style='flex:1'><h3>👷 SOMA POR SUPERVISOR</h3><table><tr><th>SUP</th><th>EMAIL</th><th>QTD</th></tr>{tabela_sup}</table><br><table><tr><th>SUP</th><th>ITEM</th><th>QTD</th></tr>{tabela_sup_detalhada}</table></div><div class='card' style='flex:1'><h3>📦 Item + Tamanho</h3><table><tr><th>ITEM</th><th>TAM</th><th>QTD</th></tr>{tabela_item_tamanho}</table></div></div>
     <script>
-    const labelsItens = {json.dumps(labels_itens)};
-    const valuesItens = {json.dumps(values_itens)};
-    const labelsSup = {json.dumps(labels_sup)};
-    const valuesSup = {json.dumps(values_sup)};
-    const labelsGer = {json.dumps(labels_ger)};
-    const valuesGer = {json.dumps(values_ger)};
-    new Chart(document.getElementById('chartItens'), {{type: 'bar', data: {{labels: labelsItens, datasets: [{{data: valuesItens, backgroundColor: '#0F4C8F'}}]}}, options: {{indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: {{legend:{{display:false}}, datalabels:{{anchor:'end', align:'end', color:'#000', font:{{weight:'bold', size:14}}}} }}, scales: {{x: {{beginAtZero:true, ticks:{{stepSize:1, precision:0}}}}}} }}, plugins: [ChartDataLabels]}});
-    new Chart(document.getElementById('chartSup'), {{type: 'bar', data: {{labels: labelsSup, datasets: [{{data: valuesSup, backgroundColor: '#FFCC00'}}]}}, options: {{indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: {{legend:{{display:false}}, datalabels:{{anchor:'end', align:'end', color:'#000', font:{{weight:'bold', size:14}}}} }}, scales: {{x: {{beginAtZero:true, ticks:{{stepSize:1, precision:0}}}}}} }}, plugins: [ChartDataLabels]}});
-    new Chart(document.getElementById('chartGer'), {{type: 'bar', data: {{labels: labelsGer, datasets: [{{data: valuesGer, backgroundColor: '#28a745'}}]}}, options: {{indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: {{legend:{{display:false}}, datalabels:{{anchor:'end', align:'end', color:'#000', font:{{weight:'bold', size:14}}}} }}, scales: {{x: {{beginAtZero:true, ticks:{{stepSize:1, precision:0}}}}}} }}, plugins: [ChartDataLabels]}});
-    </script>
-    </body></html>
-    """
+    const labelsItens = {json.dumps(labels_itens)}; const valuesItens = {json.dumps(values_itens)};
+    const labelsSup = {json.dumps(labels_sup)}; const valuesSup = {json.dumps(values_sup)};
+    const labelsGer = {json.dumps(labels_ger)}; const valuesGer = {json.dumps(values_ger)};
+    new Chart(document.getElementById('chartItens'), {{type:'bar', data:{{labels:labelsItens, datasets:[{{data:valuesItens, backgroundColor:'#0F4C8F'}}]}}, options:{{indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{{legend:{{display:false}}, datalabels:{{anchor:'end', align:'end', color:'#000', font:{{weight:'bold', size:14}}}} }}, scales:{{x:{{beginAtZero:true}}}} }}, plugins:[ChartDataLabels]}});
+    new Chart(document.getElementById('chartSup'), {{type:'bar', data:{{labels:labelsSup, datasets:[{{data:valuesSup, backgroundColor:'#FFCC00'}}]}}, options:{{indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{{legend:{{display:false}}, datalabels:{{anchor:'end', align:'end', color:'#000', font:{{weight:'bold', size:14}}}} }}, scales:{{x:{{beginAtZero:true}}}} }}, plugins:[ChartDataLabels]}});
+    new Chart(document.getElementById('chartGer'), {{type:'bar', data:{{labels:labelsGer, datasets:[{{data:valuesGer, backgroundColor:'#28a745'}}]}}, options:{{indexAxis:'y', responsive:true, maintainAspectRatio:false, plugins:{{legend:{{display:false}}, datalabels:{{anchor:'end', align:'end', color:'#000', font:{{weight:'bold', size:14}}}} }}, scales:{{x:{{beginAtZero:true}}}} }}, plugins:[ChartDataLabels]}});
+    </script></body></html>"""
     return html
 
 @app_flask.route('/emails')
 def ver_emails():
-    html="<h2>Emails Gerados</h2><a href='/graficos'>Voltar</a><br><br><table border=1 cellpadding=8><tr><th>SUPERVISOR / GERENTE</th><th>EMAIL</th></tr>"
-    for nome,email in sorted(EMAILS_SUP.items()):
-        html+=f"<tr><td>{nome}</td><td>{email}</td></tr>"
+    html="<h2>Emails</h2><a href='/graficos'>Voltar</a><br><br><table border=1 cellpadding=8><tr><th>NOME</th><th>EMAIL</th></tr>"
+    for n,e in sorted(EMAILS_SUP.items()): html+=f"<tr><td>{n}</td><td>{e}</td></tr>"
     html+="</table>"
     return html
 
 @app_flask.route('/base')
 def base():
-    filtro_chapa = request.args.get('chapa','').strip()
-    filtro_sup = request.args.get('supervisor','').strip().upper()
-    html = f"<html><head><meta charset='utf-8'><title>BASE SESMT</title><style>body{{font-family:Arial;padding:15px;background:#f0f2f5}} table{{width:100%;border-collapse:collapse;background:white;font-size:11px}} th,td{{border:1px solid #ddd;padding:6px}} th{{background:#0F4C8F;color:white}} .btn{{padding:5px 10px;border-radius:4px;text-decoration:none;color:white;font-size:11px}} .del{{background:#dc3545}} .view{{background:#0F4C8F}} .excel{{background:green}} .graf{{background:#fd7e14}}</style></head><body><h2>BASE SESMT</h2><a class='btn excel' href='/excel'>📥 EXCEL</a> <a class='btn graf' href='/graficos'>📊 GRÁFICOS</a> <a class='btn' style='background:#17a2b8' href='/emails'>📧 EMAILS</a><br><br><form>CHAPA: <input name='chapa' value='{filtro_chapa}'> SUPERVISOR: <input name='supervisor' value='{filtro_sup}'><button>Buscar</button> <a href='/base'>Limpar</a> <a href='/exportar'>CSV</a></form><br><table><tr><th>DATA</th><th>CHAPA</th><th>NOME</th><th>SUPERVISOR</th><th>COORD</th><th>NÃO CONF</th><th>AÇÃO</th></tr>"
+    html = "<html><head><meta charset='utf-8'><title>BASE</title><style>body{font-family:Arial;padding:15px;background:#f0f2f5} table{width:100%;border-collapse:collapse;background:white;font-size:11px} th,td{border:1px solid #ddd;padding:6px} th{background:#0F4C8F;color:white} .btn{padding:5px 10px;border-radius:4px;color:white;text-decoration:none}</style></head><body><h2>BASE</h2><a class='btn' style='background:green' href='/excel'>EXCEL</a> <a class='btn' style='background:#fd7e14' href='/graficos'>GRAFICOS</a><br><br><table><tr><th>DATA</th><th>CHAPA</th><th>NOME</th><th>SUP</th><th>COORD</th><th>NC</th><th>AÇÃO</th></tr>"
     try:
         inspecoes={}
         with open(ARQ_INS, encoding="utf-8") as f:
             for r in csv.DictReader(f):
-                ch = r.get('chapa',''); sup = r.get('supervisor','').upper()
-                if filtro_chapa and filtro_chapa.zfill(6) not in ch.zfill(6): continue
-                if filtro_sup and filtro_sup not in sup: continue
+                ch=r.get('chapa','')
                 if ch not in inspecoes: inspecoes[ch]={'data':r.get('data',''),'nome':r.get('nome',''),'supervisor':r.get('supervisor',''),'coordenador':r.get('coordenador',''),'nao_conf':0}
                 if r.get('status')=='Não Conforme': inspecoes[ch]['nao_conf']+=1
-        for ch, d in inspecoes.items():
-            html+=f"<tr><td>{d['data']}</td><td><b>{ch}</b></td><td>{d['nome']}</td><td>{d['supervisor']}</td><td>{d['coordenador']}</td><td style='color:red'><b>{d['nao_conf']}</b></td><td><a class='btn view' href='/detalhe/{ch}'>Ver</a> <a class='btn del' href='/apagar/{ch}'>Excluir</a></td></tr>"
+        for ch,d in inspecoes.items():
+            html+=f"<tr><td>{d['data']}</td><td><b>{ch}</b></td><td>{d['nome']}</td><td>{d['supervisor']}</td><td>{d['coordenador']}</td><td style='color:red'><b>{d['nao_conf']}</b></td><td><a class='btn' style='background:#0F4C8F' href='/detalhe/{ch}'>Ver</a> <a class='btn' style='background:#dc3545' href='/apagar/{ch}'>Excluir</a></td></tr>"
     except Exception as e: html+=str(e)
     html+="</table></body></html>"
     return html
 
 @app_flask.route('/detalhe/<chapa>')
 def detalhe(chapa):
-    html=f"<h2>Detalhe {chapa}</h2><a href='/base'>Voltar</a><br><br><table border=1 cellpadding=6><tr><th>ITEM</th><th>TAMANHO</th><th>FAB</th><th>STATUS</th></tr>"
+    html=f"<h2>Detalhe {chapa}</h2><a href='/base'>Voltar</a><br><table border=1 cellpadding=6><tr><th>ITEM</th><th>TAM</th><th>FAB</th><th>STATUS</th></tr>"
     try:
         with open(ARQ_INS, encoding="utf-8") as f:
             for r in csv.DictReader(f):
@@ -434,10 +390,6 @@ def apagar(chapa):
         with open(ARQ_INS, "w", newline="", encoding="utf-8") as f:
             w=csv.DictWriter(f, fieldnames=["data","chapa","nome","cargo","supervisor","coordenador","telefone","eh_motorista","item","tamanho","data_fab","validade","status"])
             w.writeheader(); w.writerows(novas)
-        for file in os.listdir(PASTA_MASC):
-            if chapa in file:
-                try: os.remove(os.path.join(PASTA_MASC,file))
-                except: pass
     except: pass
     return f"<script>alert('Chapa {chapa} liberada!');window.location='/base';</script>"
 
@@ -484,14 +436,32 @@ async def motorista_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['item_idx']=0; return await proximo_item(update, context)
 
 async def proximo_item(update, context):
-    idx=context.user_data.get('item_idx',0); itens=context.user_data.get('itens_filtrados', ITENS)
-    if idx >= len(itens): return await finalizar(update, context)
-    item=itens[idx]; context.user_data['item_atual']=item; context.user_data['tamanho_atual']=""; context.user_data['data_fab_atual']=""; context.user_data['validade_atual']=""
-    if item.get('auto_cone'): kb=[[KeyboardButton("Utilitário"), KeyboardButton("Passeio")]]; await update.message.reply_text(f"🚧 {idx+1}/{len(itens)} - {item['nome']}\nSelecione o tipo:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True)); return CONE_TIPO
-    if item.get('auto_mosquetao'): kb=[[KeyboardButton("1"), KeyboardButton("2"), KeyboardButton("3")]]; await update.message.reply_text(f"🔗 {idx+1}/{len(itens)} - {item['nome']}\nQuantidade mínima 3!\nSelecione:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True)); return TAMANHO
-    if item.get('tamanho'): await update.message.reply_text(f"📏 {idx+1}/{len(itens)} - {item['nome']}\nDigite {item.get('label_tamanho','TAMANHO')}:"); return TAMANHO
-    if item.get('data_fab'): await update.message.reply_text(f"📅 {idx+1}/{len(itens)} - {item['nome']}\nDigite DATA FAB DD/MM/AAAA:"); return DATA_FAB
-    kb=[[KeyboardButton(o) for o in item['opcoes']]]; await update.message.reply_text(f"🔍 {idx+1}/{len(itens)} - {item['nome']}\nSelecione:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True)); return STATUS
+    idx=context.user_data.get('item_idx',0)
+    itens=context.user_data.get('itens_filtrados', ITENS)
+    if idx >= len(itens):
+        return await finalizar(update, context)
+    item=itens[idx]
+    context.user_data['item_atual']=item
+    context.user_data['tamanho_atual']=""
+    context.user_data['data_fab_atual']=""
+    context.user_data['validade_atual']=""
+    if item.get('auto_cone'):
+        kb=[[KeyboardButton("Utilitário"), KeyboardButton("Passeio")]]
+        await update.message.reply_text(f"🚧 {idx+1}/{len(itens)} - {item['nome']}\nTipo:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
+        return CONE_TIPO
+    if item.get('auto_mosquetao'):
+        kb=[[KeyboardButton("1"), KeyboardButton("2"), KeyboardButton("3")]]
+        await update.message.reply_text(f"🔗 {idx+1}/{len(itens)} - {item['nome']}\nQuantidade mínima 3! Selecione:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
+        return TAMANHO
+    if item.get('tamanho'):
+        await update.message.reply_text(f"📏 {idx+1}/{len(itens)} - {item['nome']}\nDigite {item.get('label_tamanho','TAMANHO')}:")
+        return TAMANHO
+    if item.get('data_fab'):
+        await update.message.reply_text(f"📅 {idx+1}/{len(itens)} - {item['nome']}\nDigite DATA FAB DD/MM/AAAA:")
+        return DATA_FAB
+    kb=[[KeyboardButton("Conforme"), KeyboardButton("Não Conforme")]]
+    await update.message.reply_text(f"🔍 {idx+1}/{len(itens)} - {item['nome']}\nSelecione:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
+    return STATUS
 
 async def cone_tipo_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tipo = update.message.text.strip(); tipo_norm = "Utilitário" if "UTILIT" in tipo.upper() else "Passeio"; context.user_data['cone_tipo'] = tipo_norm
@@ -519,7 +489,7 @@ async def tamanho_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not ok: await update.message.reply_text(f"❌ {val}"); return TAMANHO
     context.user_data['tamanho_atual']=val
     if item.get('data_fab'): await update.message.reply_text(f"Tam {val} OK! Agora DATA FAB:"); return DATA_FAB
-    kb=[[KeyboardButton(o) for o in item['opcoes']]]; await update.message.reply_text(f"Tam {val} OK! Selecione:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True)); return STATUS
+    kb=[[KeyboardButton("Conforme"), KeyboardButton("Não Conforme")]]; await update.message.reply_text(f"Tam {val} OK! Selecione:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True)); return STATUS
 
 async def data_fab_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto=update.message.text.strip()
@@ -530,14 +500,37 @@ async def data_fab_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
         res={"item":item['nome'],"tamanho":context.user_data.get('tamanho_atual',''),"data_fab":texto,"validade":validade,"status":"Não Conforme"}
         context.user_data['resultados'].append(res); context.user_data['nao_conforme_lista'].append(res)
         await update.message.reply_text(f"⚠️ VENCIDO em {validade}! 🔴 NÃO CONFORME AUTOMÁTICO!"); context.user_data['item_idx']+=1; return await proximo_item(update, context)
-    else: kb=[[KeyboardButton(o) for o in item['opcoes']]]; await update.message.reply_text(f"📅 Validade {validade} - OK ✅\nSelecione:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True)); return STATUS
+    else: kb=[[KeyboardButton("Conforme"), KeyboardButton("Não Conforme")]]; await update.message.reply_text(f"📅 Validade {validade} - OK ✅\nSelecione:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True)); return STATUS
 
 async def status_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    status=update.message.text.strip(); item=context.user_data['item_atual']
+    texto_raw=update.message.text.strip()
+    texto = texto_raw.upper()
+    if "NÃO" in texto or "NAO" in texto:
+        status="Não Conforme" if "CONFORME" in texto else "Não Conforme"
+        if "NÃO APLICA" in texto or "NAO APLICA" in texto:
+            status="Não Aplica"
+    elif "CONFORME" in texto:
+        status="Conforme"
+    else:
+        # aceita qualquer coisa pra não travar
+        status="Conforme" if "C" in texto else "Não Conforme"
+        if texto_raw.lower() in ["conforme","não conforme","nao conforme","não aplica","nao aplica","conforme "," conforme"]:
+            status = texto_raw.capitalize() if "Não" not in texto_raw else "Não Conforme"
+
+    # Normalização final
+    if "NÃO CONFORME" in texto or texto.strip().upper() == "NAO CONFORME":
+        status="Não Conforme"
+    elif "CONFORME" in texto and "NÃO" not in texto:
+        status="Conforme"
+    elif "APLICA" in texto:
+        status="Não Aplica"
+
+    item=context.user_data['item_atual']
     res={"item":item['nome'],"tamanho":context.user_data.get('tamanho_atual',''),"data_fab":context.user_data.get('data_fab_atual',''),"validade":context.user_data.get('validade_atual',''),"status":status}
     context.user_data['resultados'].append(res)
     if status=="Não Conforme": context.user_data['nao_conforme_lista'].append(res)
-    context.user_data['item_idx']+=1; return await proximo_item(update, context)
+    context.user_data['item_idx']+=1
+    return await proximo_item(update, context)
 
 async def finalizar(update, context):
     chapa=context.user_data['chapa']; func=context.user_data['func']; tel=context.user_data['telefone']; eh_mot=context.user_data['eh_motorista']
@@ -554,17 +547,17 @@ async def finalizar(update, context):
         enviado, dest = enviar_email_nao_conforme(func['supervisor'], func['coordenador'], chapa, func['nome'], nao_conf, caminho_txt, dados_colab)
     msg=f"✅ FINALIZADA!\n\nCHAPA: {chapa}\nNÃO CONF: {len(nao_conf)}\n\n📋 MÁSCARA:\n{txt_conteudo}"
     if enviado: msg+=f"\n\n📧 E-mail enviado para: {', '.join(dest)}"
-    elif nao_conf: msg+=f"\n\n⚠️ Email não enviado - verifique variáveis no Render."
+    elif nao_conf: msg+=f"\n\n⚠️ Email não configurado no Render."
     await update.message.reply_text(msg)
     if os.path.exists(caminho_txt):
         await context.bot.send_document(chat_id=update.effective_chat.id, document=open(caminho_txt, "rb"), filename=os.path.basename(caminho_txt), caption="📄 MÁSCARA TXT")
-    kb = ReplyKeyboardMarkup([[KeyboardButton("🔄 NOVA INSPEÇÃO - /start")],[KeyboardButton("/start")]], resize_keyboard=True)
-    await update.message.reply_text("👇 Para NOVA solicitação clique:", reply_markup=kb)
+    kb = ReplyKeyboardMarkup([[KeyboardButton("🔄 NOVA INSPEÇÃO - /start")]], resize_keyboard=True)
+    await update.message.reply_text("👇 Para nova inspeção clique:", reply_markup=kb)
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = ReplyKeyboardMarkup([[KeyboardButton("/start - Nova Inspeção")]], resize_keyboard=True)
-    await update.message.reply_text("Cancelado! /start para recomeçar", reply_markup=kb); return ConversationHandler.END
+    await update.message.reply_text("Cancelado! /start", reply_markup=kb); return ConversationHandler.END
 
 def main():
     threading.Thread(target=run_flask, daemon=True).start()
