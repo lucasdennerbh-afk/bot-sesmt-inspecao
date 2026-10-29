@@ -1,4 +1,5 @@
-import os, threading, csv, datetime, re, uuid
+import os, threading, csv, datetime, re, uuid, json
+from collections import Counter, defaultdict
 from flask import Flask, send_from_directory, request, send_file
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, ConversationHandler, filters, ContextTypes
@@ -58,7 +59,6 @@ ITENS = [
     {"nome":"PERNEIRA", "regra":"TODOS", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
     {"nome":"ESCADA DUPLA", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
     {"nome":"BANDEIROLA", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    # CONES COM REGRA ESPECIAL
     {"nome":"CONES DE SINALIZAÇÃO", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"], "auto_cone":True},
     {"nome":"TRAVA QUEDAS", "regra":"TODOS", "tamanho":False, "data_fab":True, "validade_anos":5, "opcoes":["Conforme","Não Conforme"]},
     {"nome":"PROTETOR SOLAR", "regra":"TODOS", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
@@ -116,11 +116,9 @@ def validar_tamanho(valor, tipo):
     valor=valor.strip().upper()
     if tipo=="NUM2":
         if not valor.isdigit(): return False, "Só números!"
-        if len(valor)>2: return False, "Máx 2!"
         return True, valor
     if tipo=="LETRAS3":
         if not valor.isalpha(): return False, "Só letras!"
-        if len(valor)>3: return False, "Máx 3!"
         return True, valor
     if tipo=="QTD":
         if not valor.isdigit(): return False, "Só números!"
@@ -134,41 +132,154 @@ def calcular_validade(data_str, anos=5):
     except: return "", False
 def gerar_mascara_txt(dados_colab, lista_nao_conforme):
     txt = f"""PEDIDO DE EPI - NÃO CONFORME
-
 CHAPA: {dados_colab['chapa']}
 NOME: {dados_colab['nome']}
-TELEFONE: {dados_colab['telefone']}
-
-ITENS NÃO CONFORME:
-"""
-    if not lista_nao_conforme: txt += "NENHUM - Todos conforme\n"
-    else:
-        for r in lista_nao_conforme:
-            linha = f"- {r['item']}"
-            if r.get('tamanho'): linha += f" | {r['tamanho']}"
-            if r.get('data_fab'): linha += f" | FAB: {r['data_fab']}"
-            txt += linha + "\n"
-    txt += f"""
-
+TEL: {dados_colab['telefone']}
 SUPERVISOR: {dados_colab['supervisor']}
 DATA: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}
 
+ITENS NÃO CONFORME:
 """
+    if not lista_nao_conforme: txt += "NENHUM\n"
+    else:
+        for r in lista_nao_conforme:
+            txt += f"- {r['item']} | {r.get('tamanho','')} | {r.get('data_fab','')}\n"
     nome_arq = f"MASCARA_{dados_colab['chapa']}_{uuid.uuid4().hex[:4]}.txt"
     caminho = os.path.join(PASTA_MASC, nome_arq)
     with open(caminho, "w", encoding="utf-8") as f: f.write(txt)
     return caminho, txt
 
+# ================= NOVO: GERAR EXCEL COMPLETO =================
+def gerar_excel_completo(caminho="/tmp/sesmt_completo.xlsx"):
+    try:
+        import pandas as pd
+        from openpyxl import Workbook
+    except:
+        return None
+    
+    linhas=[]
+    try:
+        with open(ARQ_INS, encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                linhas.append(r)
+    except: linhas=[]
+    
+    if not linhas:
+        return None
+    
+    # DataFrame
+    import pandas as pd
+    df = pd.DataFrame(linhas)
+    
+    # --- ABA 1: RESUMO NÃO CONFORME ---
+    df_nc = df[df['status']=='Não Conforme']
+    resumo = df_nc.groupby('item').size().reset_index(name='QTD_NAO_CONFORME')
+    resumo = resumo.sort_values('QTD_NAO_CONFORME', ascending=False)
+    
+    # --- ABA 2: TAMANHOS SEPARADOS ---
+    def extrair_tamanho_qtd(valor):
+        # valor tipo "QTD 2 - Utilitário" ou "40" ou "G"
+        tamanho=""
+        quantidade=""
+        tipo_veiculo=""
+        if not valor: return tamanho, quantidade, tipo_veiculo
+        v=str(valor).upper()
+        # pega numero
+        import re
+        nums=re.findall(r'\d+', v)
+        if "QTD" in v and nums:
+            quantidade=nums[0]
+            tamanho=valor
+        elif "UTILIT" in v or "PASSEIO" in v:
+            tipo_veiculo="Utilitário" if "UTILIT" in v else "Passeio"
+            if nums: quantidade=nums[0]
+            tamanho=valor
+        else:
+            tamanho=valor
+            if nums: quantidade=nums[0] if "QTD" not in v else nums[0]
+        return tamanho, quantidade, tipo_veiculo
+    
+    df_tam = df.copy()
+    df_tam[['TAMANHO_COL','QUANTIDADE_COL','TIPO_VEICULO']] = df_tam['tamanho'].apply(lambda x: pd.Series(extrair_tamanho_qtd(x)))
+    
+    # --- ABA 3: RESUMO POR SUPERVISOR ---
+    resumo_sup = df_nc.groupby(['supervisor','item']).size().reset_index(name='QTD')
+    
+    with pd.ExcelWriter(caminho, engine='openpyxl') as writer:
+        resumo.to_excel(writer, sheet_name='RESUMO_NAO_CONFORME', index=False)
+        df.to_excel(writer, sheet_name='DETALHADO_COMPLETO', index=False)
+        df_tam.to_excel(writer, sheet_name='TAMANHOS_SEPARADOS', index=False)
+        resumo_sup.to_excel(writer, sheet_name='POR_SUPERVISOR', index=False)
+        df_nc.to_excel(writer, sheet_name='SO_NAO_CONFORME', index=False)
+    return caminho
+
 app_flask = Flask(__name__)
 @app_flask.route('/')
-def home(): return "BOT SESMT ON"
+def home(): return "BOT SESMT ON - <a href='/base'>BASE</a> | <a href='/excel'>EXCEL COMPLETO</a> | <a href='/graficos'>GRAFICOS</a>"
 @app_flask.route('/mascaras/<path:filename>')
 def masc(filename): return send_from_directory(PASTA_MASC, filename)
+
+@app_flask.route('/excel')
+def excel_route():
+    caminho = gerar_excel_completo()
+    if not caminho or not os.path.exists(caminho):
+        return "Sem dados ainda ou falta biblioteca openpyxl/pandas no requirements.txt"
+    return send_file(caminho, as_attachment=True, download_name=f"SESMT_COMPLETO_{datetime.datetime.now().strftime('%d%m%Y_%H%M')}.xlsx")
+
+@app_flask.route('/graficos')
+def graficos():
+    linhas=[]
+    try:
+        with open(ARQ_INS, encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                linhas.append(r)
+    except: linhas=[]
+    
+    df_nc = [r for r in linhas if r.get('status')=='Não Conforme']
+    cont_item = Counter([r.get('item','') for r in df_nc])
+    cont_sup = Counter([r.get('supervisor','') for r in df_nc])
+    cont_tam = Counter([r.get('tamanho','') for r in df_nc if r.get('tamanho')])
+    
+    # Top 15 itens
+    top_itens = cont_item.most_common(15)
+    labels_itens = [x[0] for x in top_itens]
+    values_itens = [x[1] for x in top_itens]
+    
+    labels_sup = list(cont_sup.keys())[:10]
+    values_sup = list(cont_sup.values())[:10]
+    
+    html = f"""
+    <html><head><meta charset='utf-8'><title>GRÁFICOS SESMT</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>body{{font-family:Arial;padding:20px;background:#f0f2f5}} .card{{background:white;padding:20px;border-radius:10px;margin-bottom:20px;box-shadow:0 2px 5px #ccc}} h2{{color:#0F4C8F}}</style></head><body>
+    <h2>📊 DASHBOARD SESMT - NÃO CONFORME</h2>
+    <a href='/base'>BASE</a> | <a href='/excel'>BAIXAR EXCEL</a> | <a href='/graficos'>ATUALIZAR</a>
+    <div style='display:flex;gap:20px;flex-wrap:wrap'>
+    <div class='card' style='flex:2;min-width:400px'><h3>Total Não Conforme por Item (Top 15)</h3><canvas id='chartItens'></canvas></div>
+    <div class='card' style='flex:1;min-width:300px'><h3>Por Supervisor</h3><canvas id='chartSup'></canvas></div>
+    </div>
+    <div class='card'><h3>Resumo</h3>
+    <p>Total inspeções: {len(linhas)} registros | Total Não Conforme: {len(df_nc)}</p>
+    <p><b>Itens com tamanho/quantidade separados no Excel na aba TAMANHOS_SEPARADOS</b></p>
+    <table border=1 cellpadding=5><tr><th>Item</th><th>Qtd Não Conforme</th></tr>
+    {''.join([f"<tr><td>{k}</td><td><b>{v}</b></td></tr>" for k,v in cont_item.most_common()])}
+    </table>
+    </div>
+    <script>
+    const ctx1 = document.getElementById('chartItens').getContext('2d');
+    new Chart(ctx1, {{type:'bar', data:{{labels:{json.dumps(labels_itens)}, datasets:[{{label:'Qtd Não Conforme', data:{json.dumps(values_itens)}, backgroundColor:'#0F4C8F'}}]}}, options:{{indexAxis:'y'}}}});
+    const ctx2 = document.getElementById('chartSup').getContext('2d');
+    new Chart(ctx2, {{type:'pie', data:{{labels:{json.dumps(labels_sup)}, datasets:[{{data:{json.dumps(values_sup)}, backgroundColor:['#0F4C8F','#FFCC00','#28a745','#dc3545','#fd7e14','#6f42c1','#20c997','#6610f2','#e83e8c','#17a2b8']}}]}}}});
+    </script>
+    </body></html>
+    """
+    return html
+
 @app_flask.route('/base')
 def base():
     filtro_chapa = request.args.get('chapa','').strip()
     filtro_sup = request.args.get('supervisor','').strip().upper()
-    html = f"<html><head><meta charset='utf-8'><title>BASE</title><style>body{{font-family:Arial;padding:15px;background:#f0f2f5}} table{{width:100%;border-collapse:collapse;background:white;font-size:11px}} th,td{{border:1px solid #ddd;padding:6px}} th{{background:#0F4C8F;color:white}} .btn{{padding:5px 10px;border-radius:4px;text-decoration:none;color:white;font-size:11px}} .del{{background:#dc3545}} .view{{background:#0F4C8F}}</style></head><body><h2>BASE SESMT</h2><form>CHAPA: <input name='chapa' value='{filtro_chapa}'> SUPERVISOR: <input name='supervisor' value='{filtro_sup}'><button>Buscar</button> <a href='/base'>Limpar</a> <a href='/exportar'><button type='button' style='background:green;color:white'>Exportar</button></a> <a href='/pedidos'><button type='button' style='background:orange;color:white'>Máscaras</button></a></form><br><table><tr><th>DATA</th><th>CHAPA</th><th>NOME</th><th>SUPERVISOR</th><th>NÃO CONF</th><th>AÇÃO</th></tr>"
+    html = f"<html><head><meta charset='utf-8'><title>BASE SESMT</title><style>body{{font-family:Arial;padding:15px;background:#f0f2f5}} table{{width:100%;border-collapse:collapse;background:white;font-size:11px}} th,td{{border:1px solid #ddd;padding:6px}} th{{background:#0F4C8F;color:white}} .btn{{padding:5px 10px;border-radius:4px;text-decoration:none;color:white;font-size:11px}} .del{{background:#dc3545}} .view{{background:#0F4C8F}} .excel{{background:green}} .graf{{background:#fd7e14}}</style></head><body><h2>BASE SESMT</h2><a class='btn excel' href='/excel'>📥 BAIXAR EXCEL COMPLETO (com abas)</a> <a class='btn graf' href='/graficos'>📊 VER GRÁFICOS</a><br><br><form>CHAPA: <input name='chapa' value='{filtro_chapa}'> SUPERVISOR: <input name='supervisor' value='{filtro_sup}'><button>Buscar</button> <a href='/base'>Limpar</a> <a href='/exportar'>CSV Simples</a></form><br><table><tr><th>DATA</th><th>CHAPA</th><th>NOME</th><th>SUPERVISOR</th><th>NÃO CONF</th><th>AÇÃO</th></tr>"
     try:
         inspecoes={}
         with open(ARQ_INS, encoding="utf-8") as f:
@@ -183,24 +294,24 @@ def base():
     except Exception as e: html+=str(e)
     html+="</table></body></html>"
     return html
+
 @app_flask.route('/detalhe/<chapa>')
 def detalhe(chapa):
-    html=f"<h2>Detalhe {chapa}</h2><a href='/base'>Voltar</a><br><table border=1 cellpadding=6><tr><th>ITEM</th><th>QTD/TAM</th><th>FAB</th><th>STATUS</th></tr>"
+    html=f"<h2>Detalhe {chapa}</h2><a href='/base'>Voltar</a> | <a href='/excel'>Excel</a> | <a href='/graficos'>Gráficos</a><br><br><table border=1 cellpadding=6><tr><th>ITEM</th><th>TAMANHO</th><th>QTD SEPARADA</th><th>FAB</th><th>STATUS</th></tr>"
     try:
         with open(ARQ_INS, encoding="utf-8") as f:
             for r in csv.DictReader(f):
                 if str(r.get('chapa','')).zfill(6)==str(chapa).zfill(6):
+                    tam=r.get('tamanho','')
+                    import re
+                    nums=re.findall(r'\d+', tam)
+                    qtd=nums[0] if nums else "-"
                     cor="red" if r.get('status')=="Não Conforme" else "green"
-                    html+=f"<tr><td>{r.get('item')}</td><td>{r.get('tamanho')}</td><td>{r.get('data_fab')}</td><td style='color:{cor}'><b>{r.get('status')}</b></td></tr>"
+                    html+=f"<tr><td>{r.get('item')}</td><td>{tam}</td><td><b>{qtd}</b></td><td>{r.get('data_fab')}</td><td style='color:{cor}'><b>{r.get('status')}</b></td></tr>"
     except: pass
     html+="</table>"
-    try:
-        for file in os.listdir(PASTA_MASC):
-            if chapa in file and file.endswith('.txt'):
-                with open(os.path.join(PASTA_MASC,file), encoding="utf-8") as ff: html+=f"<pre style='background:#fffbe6;padding:15px'>{ff.read()}</pre>"
-                break
-    except: pass
     return html
+
 @app_flask.route('/apagar/<chapa>')
 def apagar(chapa):
     chapa=str(chapa).zfill(6)
@@ -218,6 +329,7 @@ def apagar(chapa):
                 except: pass
     except: pass
     return f"<script>alert('Chapa {chapa} liberada!');window.location='/base';</script>"
+
 @app_flask.route('/pedidos')
 def pedidos():
     html="<h2>Máscaras TXT</h2><a href='/base'>Voltar</a><br><br>"
@@ -295,7 +407,7 @@ async def proximo_item(update, context):
     context.user_data['item_atual']=item; context.user_data['tamanho_atual']=""; context.user_data['data_fab_atual']=""; context.user_data['validade_atual']=""
     if item.get('auto_cone'):
         kb=[[KeyboardButton("Utilitário"), KeyboardButton("Passeio")]]
-        await update.message.reply_text(f"🚧 {idx+1}/{len(itens)} - {item['nome']}\n\nSelecione o tipo de veículo:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
+        await update.message.reply_text(f"🚧 {idx+1}/{len(itens)} - {item['nome']}\nSelecione o tipo de veículo:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
         return CONE_TIPO
     if item.get('auto_mosquetao'):
         kb=[[KeyboardButton("1"), KeyboardButton("2"), KeyboardButton("3")]]
@@ -311,68 +423,39 @@ async def proximo_item(update, context):
     await update.message.reply_text(f"🔍 {idx+1}/{len(itens)} - {item['nome']}\nSelecione:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
     return STATUS
 
-# NOVO - CONES TIPO
 async def cone_tipo_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     tipo = update.message.text.strip()
-    if "Utilitário" not in tipo and "Passeio" not in tipo and "UTILIT" not in tipo.upper() and "PASSEIO" not in tipo.upper():
-        await update.message.reply_text("Selecione: Utilitário ou Passeio")
-        return CONE_TIPO
-    # normaliza
     tipo_norm = "Utilitário" if "UTILIT" in tipo.upper() else "Passeio"
     context.user_data['cone_tipo'] = tipo_norm
     if tipo_norm == "Utilitário":
         kb = [[KeyboardButton(str(i)) for i in range(1,6)], [KeyboardButton(str(i)) for i in range(6,11)]]
-        await update.message.reply_text(f"🚐 Veículo Utilitário - Mínimo 10 cones!\n\nSelecione quantidade (1 a 10):", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
+        await update.message.reply_text(f"🚐 Utilitário - Mínimo 10 cones!\nSelecione quantidade (1 a 10):", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
     else:
         kb = [[KeyboardButton(str(i)) for i in range(1,6)]]
-        await update.message.reply_text(f"🚗 Veículo Passeio - Mínimo 5 cones!\n\nSelecione quantidade (1 a 5):", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
+        await update.message.reply_text(f"🚗 Passeio - Mínimo 5 cones!\nSelecione quantidade (1 a 5):", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
     return CONE_QTD
 
 async def cone_qtd_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text.strip()
-    if not texto.isdigit():
-        await update.message.reply_text("Digite só número!")
-        return CONE_QTD
-    qtd = int(texto)
+    qtd = int(texto) if texto.isdigit() else 0
     tipo = context.user_data.get('cone_tipo','Utilitário')
-    
     if tipo == "Utilitário":
-        if qtd < 1 or qtd > 10:
-            await update.message.reply_text("Utilitário: selecione 1 a 10")
-            return CONE_QTD
-        if qtd < 10:
-            status_auto = "Não Conforme"
-            msg = f"🔴 CONES Utilitário QTD {qtd} - Abaixo do mínimo 10 = AUTOMATICAMENTE NÃO CONFORME!"
-        else:
-            status_auto = "Conforme"
-            msg = f"🟢 CONES Utilitário QTD {qtd} - OK! AUTOMATICAMENTE CONFORME!"
-    else: # Passeio
-        if qtd < 1 or qtd > 5:
-            await update.message.reply_text("Passeio: selecione 1 a 5")
-            return CONE_QTD
-        if qtd < 5:
-            status_auto = "Não Conforme"
-            msg = f"🔴 CONES Passeio QTD {qtd} - Abaixo do mínimo 5 = AUTOMATICAMENTE NÃO CONFORME!"
-        else:
-            status_auto = "Conforme"
-            msg = f"🟢 CONES Passeio QTD {qtd} - OK! AUTOMATICAMENTE CONFORME!"
-    
+        status_auto = "Não Conforme" if qtd < 10 else "Conforme"
+    else:
+        status_auto = "Não Conforme" if qtd < 5 else "Conforme"
+    msg = f"{'🔴' if status_auto=='Não Conforme' else '🟢'} CONES {tipo} QTD {qtd} = {status_auto}!"
     item = context.user_data['item_atual']
     res={"item":f"{item['nome']} - {tipo}","tamanho":f"QTD {qtd} - {tipo}","data_fab":"","validade":"","status":status_auto}
     context.user_data['resultados'].append(res)
     if status_auto=="Não Conforme": context.user_data['nao_conforme_lista'].append(res)
     await update.message.reply_text(msg)
     context.user_data['item_idx']+=1
-    context.user_data['cone_tipo']=""
     return await proximo_item(update, context)
 
 async def tamanho_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     item=context.user_data['item_atual']
     texto = update.message.text.strip()
     if item.get('auto_mosquetao'):
-        if texto not in ["1","2","3"]:
-            await update.message.reply_text("Selecione apenas 1, 2 ou 3")
-            return TAMANHO
         qtd = texto
         status_auto = "Não Conforme" if qtd in ["1","2"] else "Conforme"
         msg = f"🔴 MOSQUETÃO QTD {qtd} = NÃO CONFORME!" if status_auto=="Não Conforme" else f"🟢 MOSQUETÃO QTD {qtd} = CONFORME!"
@@ -382,7 +465,6 @@ async def tamanho_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg)
         context.user_data['item_idx']+=1
         return await proximo_item(update, context)
-
     ok, val = validar_tamanho(texto, item.get('tamanho_tipo',''))
     if not ok:
         await update.message.reply_text(f"❌ {val}")
@@ -419,9 +501,6 @@ async def data_fab_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def status_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     status=update.message.text.strip()
     item=context.user_data['item_atual']
-    if status not in item['opcoes']:
-        await update.message.reply_text(f"Selecione: {', '.join(item['opcoes'])}")
-        return STATUS
     res={"item":item['nome'],"tamanho":context.user_data.get('tamanho_atual',''),"data_fab":context.user_data.get('data_fab_atual',''),"validade":context.user_data.get('validade_atual',''),"status":status}
     context.user_data['resultados'].append(res)
     if status=="Não Conforme": context.user_data['nao_conforme_lista'].append(res)
