@@ -26,9 +26,7 @@ def gerar_email_telemont(nome_completo):
     partes = [p for p in nome.split() if p not in ["DE","DA","DO","DOS","DAS","E"]]
     if len(partes) == 1:
         return f"{partes[0].lower()}@telemont.com.br"
-    primeiro = partes[0].lower()
-    ultimo = partes[-1].lower()
-    return f"{primeiro}.{ultimo}@telemont.com.br"
+    return f"{partes[0].lower()}.{partes[-1].lower()}@telemont.com.br"
 
 def carregar_funcionarios():
     global FUNCIONARIOS, SUPERVISORES_LISTA, COORDENADORES_LISTA
@@ -42,7 +40,7 @@ def carregar_funcionarios():
             ch_col = reader.fieldnames[0]
             nome_col = next((c for c in reader.fieldnames if "nome" in c), None)
             sup_col = next((c for c in reader.fieldnames if "superv" in c), None)
-            coord_col = next((c for c in reader.fieldnames if "coord" in c), None)
+            coord_col = next((c for c in reader.fieldnames if "coord" in c or "gerent" in c), None)
             cargo_col = next((c for c in reader.fieldnames if "cargo" in c), None)
             adm_col = next((c for c in reader.fieldnames if "admiss" in c), None)
             for r in reader:
@@ -151,14 +149,11 @@ def salvar_cadastro(d):
         w.writeheader(); w.writerows(rows)
 def validar_tamanho(valor, tipo):
     valor=valor.strip().upper()
-    if tipo=="NUM2":
+    if tipo=="NUM2" or tipo=="QTD":
         if not valor.isdigit(): return False, "Só números!"
         return True, valor
     if tipo=="LETRAS3":
         if not valor.isalpha(): return False, "Só letras!"
-        return True, valor
-    if tipo=="QTD":
-        if not valor.isdigit(): return False, "Só números!"
         return True, valor
     return True, valor
 def calcular_validade(data_str, anos=5):
@@ -188,14 +183,19 @@ ITENS NÃO CONFORME:
     with open(caminho, "w", encoding="utf-8") as f: f.write(txt)
     return caminho, txt
 
-def gerar_excel_completo(caminho="/tmp/sesmt_completo.xlsx"):
+def gerar_excel_completo(caminho="/tmp/sesmt_completo.xlsx", filtro_supervisor="", filtro_gerente=""):
     try:
         import pandas as pd
     except: return None
     linhas=[]
     try:
         with open(ARQ_INS, encoding="utf-8") as f:
-            for r in csv.DictReader(f): linhas.append(r)
+            for r in csv.DictReader(f):
+                sup = str(r.get('supervisor','')).upper()
+                coord = str(r.get('coordenador','')).upper()
+                if filtro_supervisor and filtro_supervisor not in sup: continue
+                if filtro_gerente and filtro_gerente not in coord: continue
+                linhas.append(r)
     except: linhas=[]
     if not linhas: return None
     df = pd.DataFrame(linhas)
@@ -205,10 +205,10 @@ def gerar_excel_completo(caminho="/tmp/sesmt_completo.xlsx"):
     resumo_coord = df_nc.groupby(['coordenador','item']).size().reset_index(name='QTD')
     with pd.ExcelWriter(caminho, engine='openpyxl') as writer:
         resumo.to_excel(writer, sheet_name='RESUMO_NAO_CONFORME', index=False)
-        df.to_excel(writer, sheet_name='DETALHADO_COMPLETO', index=False)
-        resumo_sup.to_excel(writer, sheet_name='POR_SUPERVISOR', index=False)
-        resumo_coord.to_excel(writer, sheet_name='POR_COORDENADOR', index=False)
+        df.to_excel(writer, sheet_name='DETALHADO_FILTRADO', index=False)
         df_nc.to_excel(writer, sheet_name='SO_NAO_CONFORME', index=False)
+        resumo_sup.to_excel(writer, sheet_name='POR_SUPERVISOR', index=False)
+        resumo_coord.to_excel(writer, sheet_name='POR_GERENTE', index=False)
         pd.DataFrame([{"supervisor":k, "email":v} for k,v in EMAILS_SUP.items()]).to_excel(writer, sheet_name='EMAILS_SUPERVISORES', index=False)
     return caminho
 
@@ -219,24 +219,17 @@ def enviar_email_nao_conforme(supervisor_nome, coordenador_nome, chapa, nome_col
         from email.mime.text import MIMEText
         from email.mime.base import MIMEBase
         from email import encoders
-
         emails_destino = []
         email_sup = EMAILS_SUP.get(supervisor_nome.upper()) if supervisor_nome else None
         email_coord = EMAILS_SUP.get(coordenador_nome.upper()) if coordenador_nome else None
         if email_sup: emails_destino.append(email_sup)
         if email_coord and email_coord not in emails_destino: emails_destino.append(email_coord)
-
-        if not emails_destino:
-            return False, []
-
-        EMAIL_USER = os.environ.get("EMAIL_USER")
-        EMAIL_PASS = os.environ.get("EMAIL_PASS")
-        SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.office365.com")
+        if not emails_destino: return False, []
+        EMAIL_USER = os.environ.get("EMAIL_USER", "botsesmt@gmail.com")
+        EMAIL_PASS = os.environ.get("EMAIL_PASS", "tcepcskwinxlfnsk")
+        SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
         SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
-
-        if not EMAIL_USER or not EMAIL_PASS:
-            return False, []
-
+        if not EMAIL_USER or not EMAIL_PASS: return False, []
         assunto = f"INSPEÇÃO NÃO CONFORME - CHAPA {chapa} - {nome_colab}"
         corpo = f"""Segue os itens não conforme de chapa {chapa} - {nome_colab}
 
@@ -253,13 +246,11 @@ ITENS NÃO CONFORME ({len(lista_nao_conforme)}):
         for r in lista_nao_conforme:
             corpo += f"- {r['item']} | TAM: {r.get('tamanho','')} | FAB: {r.get('data_fab','')}\n"
         corpo += "\nMÁSCARA COMPLETA EM ANEXO.\n\nSESMT - Telemont\n"
-
         msg = MIMEMultipart()
         msg['From'] = EMAIL_USER
         msg['To'] = ", ".join(emails_destino)
         msg['Subject'] = assunto
         msg.attach(MIMEText(corpo, 'plain', 'utf-8'))
-
         if caminho_txt and os.path.exists(caminho_txt):
             with open(caminho_txt, "rb") as attachment:
                 part = MIMEBase('application', 'octet-stream')
@@ -267,7 +258,6 @@ ITENS NÃO CONFORME ({len(lista_nao_conforme)}):
             encoders.encode_base64(part)
             part.add_header('Content-Disposition', f"attachment; filename= {os.path.basename(caminho_txt)}")
             msg.attach(part)
-
         server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
         server.starttls()
         server.login(EMAIL_USER, EMAIL_PASS)
@@ -281,51 +271,62 @@ ITENS NÃO CONFORME ({len(lista_nao_conforme)}):
 app_flask = Flask(__name__)
 @app_flask.route('/')
 def home(): return f"BOT SESMT ON - <a href='/base'>BASE</a> | <a href='/excel'>EXCEL</a> | <a href='/graficos'>GRAFICOS</a> | Emails: {len(EMAILS_SUP)}"
+
 @app_flask.route('/mascaras/<path:filename>')
 def masc(filename): return send_from_directory(PASTA_MASC, filename)
+
 @app_flask.route('/excel')
 def excel_route():
-    caminho = gerar_excel_completo()
-    if not caminho or not os.path.exists(caminho): return "Sem dados ou falta openpyxl/pandas"
-    return send_file(caminho, as_attachment=True, download_name=f"SESMT_COMPLETO_{datetime.datetime.now().strftime('%d%m%Y_%H%M')}.xlsx")
+    filtro_sup = request.args.get('supervisor','').strip().upper()
+    filtro_ger = request.args.get('gerente','').strip().upper() or request.args.get('coordenador','').strip().upper()
+    caminho = gerar_excel_completo(filtro_supervisor=filtro_sup, filtro_gerente=filtro_ger)
+    if not caminho or not os.path.exists(caminho): return "Sem dados para este filtro"
+    nome = f"SESMT_{filtro_sup or 'TODOS'}_{filtro_ger or 'TODOS'}_{datetime.datetime.now().strftime('%d%m%Y_%H%M')}.xlsx"
+    return send_file(caminho, as_attachment=True, download_name=nome)
 
 @app_flask.route('/graficos')
 def graficos():
+    filtro_sup = request.args.get('supervisor','').strip().upper()
+    filtro_ger = request.args.get('gerente','').strip().upper() or request.args.get('coordenador','').strip().upper()
     linhas=[]
     try:
         with open(ARQ_INS, encoding="utf-8") as f:
             for r in csv.DictReader(f):
+                sup = str(r.get('supervisor','')).upper()
+                coord = str(r.get('coordenador','')).upper()
+                if filtro_sup and filtro_sup not in sup: continue
+                if filtro_ger and filtro_ger not in coord: continue
                 linhas.append(r)
     except: linhas=[]
-    
     df_nc = [r for r in linhas if str(r.get('status','')).strip() == 'Não Conforme']
-    
+    todos_sup = sorted(SUPERVISORES_LISTA)
+    todos_ger = sorted(COORDENADORES_LISTA)
+    options_sup = "".join([f"<option value='{s}' {'selected' if s==filtro_sup else ''}>{s}</option>" for s in todos_sup])
+    options_ger = "".join([f"<option value='{g}' {'selected' if g==filtro_ger else ''}>{g}</option>" for g in todos_ger])
     cont_item = Counter([r.get('item','').strip() for r in df_nc if r.get('item')])
     cont_sup = Counter([r.get('supervisor','').strip() for r in df_nc if r.get('supervisor')])
+    cont_ger = Counter([r.get('coordenador','').strip() for r in df_nc if r.get('coordenador')])
     cont_sup_item = defaultdict(Counter)
-    
     for r in df_nc:
         sup = r.get('supervisor','').strip()
         item = r.get('item','').strip()
-        if sup and item:
-            cont_sup_item[sup][item] += 1
-
+        if sup and item: cont_sup_item[sup][item] += 1
     top_itens = cont_item.most_common(15)
     labels_itens = [x[0] for x in top_itens]
     values_itens = [int(x[1]) for x in top_itens]
-
     top_sup = cont_sup.most_common(15)
     labels_sup = [x[0] for x in top_sup]
     values_sup = [int(x[1]) for x in top_sup]
-
+    top_ger = cont_ger.most_common(15)
+    labels_ger = [x[0] for x in top_ger]
+    values_ger = [int(x[1]) for x in top_ger]
     tabela_sup = "".join([f"<tr><td><b>{sup}</b></td><td>{EMAILS_SUP.get(sup,'')}</td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for sup,qtd in cont_sup.most_common()])
     tabela_sup_detalhada = "".join([f"<tr><td>{sup}</td><td>{item}</td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for sup, counter in cont_sup_item.items() for item,qtd in counter.most_common()])
-
     cont_item_tam = defaultdict(Counter)
     for r in df_nc:
         cont_item_tam[r.get('item','')][r.get('tamanho','')] += 1
     tabela_item_tamanho = "".join([f"<tr><td>{item}</td><td><b>{tam}</b></td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for item, c in cont_item_tam.items() for tam,qtd in c.most_common() if tam])
-
+    filtro_txt = f"FILTRO ATIVO: Supervisor={filtro_sup or 'TODOS'} | Gerente={filtro_ger or 'TODOS'} - Total Não Conforme: {len(df_nc)}" if filtro_sup or filtro_ger else f"SEM FILTRO - Total Não Conforme: {len(df_nc)}"
     html = f"""
     <html><head><meta charset='utf-8'><title>GRÁFICOS SESMT</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -336,105 +337,48 @@ def graficos():
     h2{{color:#0F4C8F}} 
     table{{border-collapse:collapse;width:100%}} th,td{{border:1px solid #ddd;padding:8px;font-size:13px}} th{{background:#0F4C8F;color:white}}
     .chart-wrap{{position:relative;height:400px}}
+    select{{padding:8px;border-radius:5px;border:1px solid #ccc;min-width:280px}}
+    .btn{{padding:8px 14px;border-radius:5px;text-decoration:none;color:white;background:#0F4C8F;border:none;cursor:pointer}}
+    .btn-green{{background:green}}
     </style></head><body>
     <h2>📊 DASHBOARD SESMT - NÃO CONFORME</h2>
-    <a href='/base'>BASE</a> | <a href='/excel'>BAIXAR EXCEL</a> | <a href='/graficos'>ATUALIZAR</a> | <a href='/emails'>VER EMAILS</a>
-    
-    <div style='display:flex;gap:20px;flex-wrap:wrap;margin-top:20px'>
-      <div class='card' style='flex:2;min-width:500px'>
-        <h3>Total Não Conforme por Item (Top 15)</h3>
-        <div class='chart-wrap'><canvas id='chartItens'></canvas></div>
-      </div>
-      <div class='card' style='flex:1;min-width:400px'>
-        <h3>Total Não Conforme por Supervisor</h3>
-        <div class='chart-wrap'><canvas id='chartSup'></canvas></div>
-      </div>
+    <a href='/base'>BASE</a> | <a href='/emails'>VER EMAILS</a>
+    <div class='card' style='background:#e8f0fe;border:2px solid #0F4C8F'>
+        <form method='get' style='display:flex;gap:15px;flex-wrap:wrap;align-items:end'>
+            <div><label><b>SUPERVISOR:</b></label><br><select name='supervisor'><option value=''>-- TODOS --</option>{options_sup}</select></div>
+            <div><label><b>GERENTE / COORDENADOR:</b></label><br><select name='gerente'><option value=''>-- TODOS --</option>{options_ger}</select></div>
+            <div><button type='submit' class='btn'>🔍 FILTRAR</button> <a href='/graficos' class='btn' style='background:#6c757d'>Limpar</a></div>
+            <div><a href='/excel?supervisor={filtro_sup}&gerente={filtro_ger}' class='btn btn-green'>📥 BAIXAR EXCEL DO FILTRO</a></div>
+        </form>
+        <div style='margin-top:10px;color:#0F4C8F;font-weight:bold'>{filtro_txt}</div>
     </div>
-
+    <div style='display:flex;gap:20px;flex-wrap:wrap'>
+      <div class='card' style='flex:2;min-width:500px'><h3>Não Conforme por Item (Top 15)</h3><div class='chart-wrap'><canvas id='chartItens'></canvas></div></div>
+      <div class='card' style='flex:1;min-width:400px'><h3>Por Supervisor</h3><div class='chart-wrap'><canvas id='chartSup'></canvas></div></div>
+      <div class='card' style='flex:1;min-width:400px'><h3>Por Gerente</h3><div class='chart-wrap'><canvas id='chartGer'></canvas></div></div>
+    </div>
     <div style='display:flex;gap:20px;flex-wrap:wrap'>
       <div class='card' style='flex:1;min-width:380px'>
-        <h3>👷 SOMA POR SUPERVISOR</h3>
-        <table><tr><th>SUPERVISOR</th><th>EMAIL</th><th>QTD NÃO CONFORME</th></tr>
-        {tabela_sup or "<tr><td colspan=3>Nenhum dado</td></tr>"}
-        </table><br>
+        <h3>👷 SOMA POR SUPERVISOR (filtrado)</h3>
+        <table><tr><th>SUPERVISOR</th><th>EMAIL</th><th>QTD</th></tr>{tabela_sup or "<tr><td colspan=3>Nenhum</td></tr>"}</table><br>
         <h4>Detalhado: Supervisor x Item</h4>
-        <table><tr><th>SUPERVISOR</th><th>ITEM</th><th>QTD</th></tr>
-        {tabela_sup_detalhada or "<tr><td colspan=3>Nenhum</td></tr>"}
-        </table>
+        <table><tr><th>SUPERVISOR</th><th>ITEM</th><th>QTD</th></tr>{tabela_sup_detalhada or "<tr><td colspan=3>Nenhum</td></tr>"}</table>
       </div>
       <div class='card' style='flex:1;min-width:400px'>
         <h3>📦 Item + Tamanho Não Conforme</h3>
-        <table><tr><th>ITEM</th><th>TAMANHO</th><th>QTD</th></tr>
-        {tabela_item_tamanho or "<tr><td colspan=3>Nenhum</td></tr>"}
-        </table>
+        <table><tr><th>ITEM</th><th>TAMANHO</th><th>QTD</th></tr>{tabela_item_tamanho or "<tr><td colspan=3>Nenhum</td></tr>"}</table>
       </div>
     </div>
-
     <script>
     const labelsItens = {json.dumps(labels_itens)};
     const valuesItens = {json.dumps(values_itens)};
     const labelsSup = {json.dumps(labels_sup)};
     const valuesSup = {json.dumps(values_sup)};
-
-    new Chart(document.getElementById('chartItens'), {{
-        type: 'bar',
-        data: {{
-            labels: labelsItens,
-            datasets: [{{
-                label: 'Qtd Não Conforme',
-                data: valuesItens,
-                backgroundColor: '#0F4C8F',
-                borderWidth: 1
-            }}]
-        }},
-        options: {{
-            indexAxis: 'y',
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {{
-                legend: {{display:false}},
-                datalabels: {{
-                    anchor: 'end',
-                    align: 'end',
-                    color: '#000',
-                    font: {{weight: 'bold', size: 14}},
-                    formatter: (v) => v
-                }}
-            }},
-            scales: {{x: {{beginAtZero:true, ticks:{{stepSize:1, precision:0}}}}}}
-        }},
-        plugins: [ChartDataLabels]
-    }});
-
-    new Chart(document.getElementById('chartSup'), {{
-        type: 'bar',
-        data: {{
-            labels: labelsSup,
-            datasets: [{{
-                label: 'Qtd Não Conforme',
-                data: valuesSup,
-                backgroundColor: '#FFCC00',
-                borderWidth: 1
-            }}]
-        }},
-        options: {{
-            indexAxis: 'y',
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {{
-                legend: {{display:false}},
-                datalabels: {{
-                    anchor: 'end',
-                    align: 'end',
-                    color: '#000',
-                    font: {{weight: 'bold', size: 14}},
-                    formatter: (v) => v
-                }}
-            }},
-            scales: {{x: {{beginAtZero:true, ticks:{{stepSize:1, precision:0}}}}}}
-        }},
-        plugins: [ChartDataLabels]
-    }});
+    const labelsGer = {json.dumps(labels_ger)};
+    const valuesGer = {json.dumps(values_ger)};
+    new Chart(document.getElementById('chartItens'), {{type: 'bar', data: {{labels: labelsItens, datasets: [{{data: valuesItens, backgroundColor: '#0F4C8F'}}]}}, options: {{indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: {{legend:{{display:false}}, datalabels:{{anchor:'end', align:'end', color:'#000', font:{{weight:'bold', size:14}}}} }}, scales: {{x: {{beginAtZero:true, ticks:{{stepSize:1, precision:0}}}}}} }}, plugins: [ChartDataLabels]}});
+    new Chart(document.getElementById('chartSup'), {{type: 'bar', data: {{labels: labelsSup, datasets: [{{data: valuesSup, backgroundColor: '#FFCC00'}}]}}, options: {{indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: {{legend:{{display:false}}, datalabels:{{anchor:'end', align:'end', color:'#000', font:{{weight:'bold', size:14}}}} }}, scales: {{x: {{beginAtZero:true, ticks:{{stepSize:1, precision:0}}}}}} }}, plugins: [ChartDataLabels]}});
+    new Chart(document.getElementById('chartGer'), {{type: 'bar', data: {{labels: labelsGer, datasets: [{{data: valuesGer, backgroundColor: '#28a745'}}]}}, options: {{indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: {{legend:{{display:false}}, datalabels:{{anchor:'end', align:'end', color:'#000', font:{{weight:'bold', size:14}}}} }}, scales: {{x: {{beginAtZero:true, ticks:{{stepSize:1, precision:0}}}}}} }}, plugins: [ChartDataLabels]}});
     </script>
     </body></html>
     """
@@ -442,10 +386,10 @@ def graficos():
 
 @app_flask.route('/emails')
 def ver_emails():
-    html="<h2>Emails Gerados Automaticamente da Base funcionarios.csv</h2><a href='/graficos'>Voltar</a><br><br><table border=1 cellpadding=8><tr><th>SUPERVISOR / COORDENADOR</th><th>EMAIL GERADO</th></tr>"
+    html="<h2>Emails Gerados</h2><a href='/graficos'>Voltar</a><br><br><table border=1 cellpadding=8><tr><th>SUPERVISOR / GERENTE</th><th>EMAIL</th></tr>"
     for nome,email in sorted(EMAILS_SUP.items()):
         html+=f"<tr><td>{nome}</td><td>{email}</td></tr>"
-    html+="</table><br><p>Para corrigir algum email, crie o arquivo supervisores.csv com supervisor,email</p>"
+    html+="</table>"
     return html
 
 @app_flask.route('/base')
@@ -605,15 +549,12 @@ async def finalizar(update, context):
     dados_colab={"chapa":chapa,"nome":func['nome'],"cargo":func['cargo'],"data_admissao":func['admissao'],"supervisor":func['supervisor'],"coordenador":func['coordenador'],"telefone":tel,"eh_motorista":eh_mot}
     caminho_txt, txt_conteudo = gerar_mascara_txt(dados_colab, nao_conf)
     with open(ARQ_PEDIDOS, "a", newline="", encoding="utf-8") as f: csv.writer(f).writerow([data_hora, chapa, func['nome'], tel, func['supervisor'], txt_conteudo.replace("\n"," | ")])
-
     enviado=False; dest=[]
     if nao_conf:
         enviado, dest = enviar_email_nao_conforme(func['supervisor'], func['coordenador'], chapa, func['nome'], nao_conf, caminho_txt, dados_colab)
-
     msg=f"✅ FINALIZADA!\n\nCHAPA: {chapa}\nNÃO CONF: {len(nao_conf)}\n\n📋 MÁSCARA:\n{txt_conteudo}"
     if enviado: msg+=f"\n\n📧 E-mail enviado para: {', '.join(dest)}"
-    elif nao_conf: msg+=f"\n\n⚠️ Email não enviado - verifique EMAIL_USER/PASS no Render."
-
+    elif nao_conf: msg+=f"\n\n⚠️ Email não enviado - verifique variáveis no Render."
     await update.message.reply_text(msg)
     if os.path.exists(caminho_txt):
         await context.bot.send_document(chat_id=update.effective_chat.id, document=open(caminho_txt, "rb"), filename=os.path.basename(caminho_txt), caption="📄 MÁSCARA TXT")
