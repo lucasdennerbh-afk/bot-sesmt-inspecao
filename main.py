@@ -5,6 +5,7 @@ from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, ConversationHandler, filters, ContextTypes
 
 TOKEN = os.environ.get("BOT_TOKEN")
+ADMIN_SENHA = os.environ.get("ADMIN_SENHA","telemont2026")
 ARQ_FUNC = "funcionarios.csv"
 ARQ_CAD = "cadastros.csv"
 ARQ_INS = "inspecoes.csv"
@@ -30,6 +31,7 @@ def gerar_email_telemont(nome_completo):
 
 def carregar_funcionarios():
     global FUNCIONARIOS, SUPERVISORES_LISTA, COORDENADORES_LISTA
+    FUNCIONARIOS.clear(); SUPERVISORES_LISTA.clear(); COORDENADORES_LISTA.clear()
     try:
         with open(ARQ_FUNC, encoding="utf-8-sig") as f:
             primeira = f.readline()
@@ -61,6 +63,7 @@ carregar_funcionarios()
 EMAILS_SUP = {}
 def carregar_emails_sup():
     global EMAILS_SUP
+    EMAILS_SUP={}
     for sup in SUPERVISORES_LISTA:
         if sup: EMAILS_SUP[sup] = gerar_email_telemont(sup)
     for coord in COORDENADORES_LISTA:
@@ -80,41 +83,41 @@ for arq, head in [(ARQ_CAD, ["chapa","nome","cargo","data_admissao","supervisor"
         with open(arq, "w", newline="", encoding="utf-8") as f: csv.writer(f).writerow(head)
 
 ITENS = [
-    {"nome":"CALÇADO DE SEGURANÇA", "regra":"TODOS", "tamanho":True, "tamanho_tipo":"NUM2", "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"CAPACETE DE SEGURANÇA", "regra":"TODOS", "tamanho":False, "data_fab":True, "validade_anos":5, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"CARNEIRA/JUGULAR", "regra":"TODOS", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"ÓCULOS DE SEGURANÇA", "regra":"TODOS", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"COLETE REFLETIVO", "regra":"TODOS", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"LUVA DE RASPA", "regra":"TODOS", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"CINTO DE SEGURANÇA", "regra":"TODOS", "tamanho":False, "data_fab":True, "validade_anos":5, "opcoes":["Conforme","Não Aplica"]},
-    {"nome":"TALABARTE DE POSICIONAMENTO", "regra":"TODOS", "tamanho":False, "data_fab":True, "validade_anos":5, "opcoes":["Conforme","Não Aplica"]},
-    {"nome":"CAPA DE CHUVA", "regra":"TODOS", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"BOTA DE PVC", "regra":"TODOS", "tamanho":True, "tamanho_tipo":"NUM2", "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"PERNEIRA", "regra":"TODOS", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"ESCADA DUPLA", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"BANDEIROLA", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"CONES DE SINALIZAÇÃO", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"], "auto_cone":True},
-    {"nome":"TRAVA QUEDAS", "regra":"TODOS", "tamanho":False, "data_fab":True, "validade_anos":5, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"PROTETOR SOLAR", "regra":"TODOS", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"GARRA MEIO DE VÃO", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"DETECTOR DE TENSÃO", "regra":"TODOS", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"VARA DE MANOBRA", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"CHAVE J", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"CHAVE T", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"CORDA 20M", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"FITA AMARRAÇÃO ESCADA", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"FITA DE ANCORAGEM EUREKA", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"FREIO ABS", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"MOSQUETÃO", "regra":"APENAS MOTORISTA", "tamanho":True, "tamanho_tipo":"QTD", "label_tamanho":"QUANTIDADE (1, 2 ou 3)", "data_fab":False, "opcoes":["1","2","3"], "auto_mosquetao":True},
-    {"nome":"CORREIA PARA ESCADA", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"CORDIM PARA ESCADA", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"FITA DE ANCORAGEM 1,5M", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"SACOLA NYLON", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"BOLSA TIRACOLO", "regra":"TODOS", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"CAMISA", "regra":"TODOS", "tamanho":True, "tamanho_tipo":"LETRAS3", "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"CALÇA", "regra":"TODOS", "tamanho":True, "tamanho_tipo":"NUM2", "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"CRACHÁ PADRÃO TELEMONT", "regra":"TODOS", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
-    {"nome":"BOLSA DE EPI", "regra":"TODOS", "tamanho":False, "data_fab":False, "opcoes":["Conforme","Não Conforme"]},
+    {"nome":"CALÇADO DE SEGURANÇA", "regra":"TODOS", "tamanho":True, "tamanho_tipo":"NUM2", "data_fab":False},
+    {"nome":"CAPACETE DE SEGURANÇA", "regra":"TODOS", "tamanho":False, "data_fab":True, "validade_anos":5},
+    {"nome":"CARNEIRA/JUGULAR", "regra":"TODOS", "tamanho":False, "data_fab":False},
+    {"nome":"ÓCULOS DE SEGURANÇA", "regra":"TODOS", "tamanho":False, "data_fab":False},
+    {"nome":"COLETE REFLETIVO", "regra":"TODOS", "tamanho":False, "data_fab":False},
+    {"nome":"LUVA DE RASPA", "regra":"TODOS", "tamanho":False, "data_fab":False},
+    {"nome":"CINTO DE SEGURANÇA", "regra":"TODOS", "tamanho":False, "data_fab":True, "validade_anos":5},
+    {"nome":"TALABARTE DE POSICIONAMENTO", "regra":"TODOS", "tamanho":False, "data_fab":True, "validade_anos":5},
+    {"nome":"CAPA DE CHUVA", "regra":"TODOS", "tamanho":False, "data_fab":False},
+    {"nome":"BOTA DE PVC", "regra":"TODOS", "tamanho":True, "tamanho_tipo":"NUM2", "data_fab":False},
+    {"nome":"PERNEIRA", "regra":"TODOS", "tamanho":False, "data_fab":False},
+    {"nome":"ESCADA DUPLA", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False},
+    {"nome":"BANDEIROLA", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False},
+    {"nome":"CONES DE SINALIZAÇÃO", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False, "auto_cone":True},
+    {"nome":"TRAVA QUEDAS", "regra":"TODOS", "tamanho":False, "data_fab":True, "validade_anos":5},
+    {"nome":"PROTETOR SOLAR", "regra":"TODOS", "tamanho":False, "data_fab":False},
+    {"nome":"GARRA MEIO DE VÃO", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False},
+    {"nome":"DETECTOR DE TENSÃO", "regra":"TODOS", "tamanho":False, "data_fab":False},
+    {"nome":"VARA DE MANOBRA", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False},
+    {"nome":"CHAVE J", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False},
+    {"nome":"CHAVE T", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False},
+    {"nome":"CORDA 20M", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False},
+    {"nome":"FITA AMARRAÇÃO ESCADA", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False},
+    {"nome":"FITA DE ANCORAGEM EUREKA", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False},
+    {"nome":"FREIO ABS", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False},
+    {"nome":"MOSQUETÃO", "regra":"APENAS MOTORISTA", "tamanho":True, "tamanho_tipo":"QTD", "label_tamanho":"QUANTIDADE (1, 2 ou 3)", "data_fab":False, "auto_mosquetao":True},
+    {"nome":"CORREIA PARA ESCADA", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False},
+    {"nome":"CORDIM PARA ESCADA", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False},
+    {"nome":"FITA DE ANCORAGEM 1,5M", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False},
+    {"nome":"SACOLA NYLON", "regra":"APENAS MOTORISTA", "tamanho":False, "data_fab":False},
+    {"nome":"BOLSA TIRACOLO", "regra":"TODOS", "tamanho":False, "data_fab":False},
+    {"nome":"CAMISA", "regra":"TODOS", "tamanho":True, "tamanho_tipo":"LETRAS3", "data_fab":False},
+    {"nome":"CALÇA", "regra":"TODOS", "tamanho":True, "tamanho_tipo":"NUM2", "data_fab":False},
+    {"nome":"CRACHÁ PADRÃO TELEMONT", "regra":"TODOS", "tamanho":False, "data_fab":False},
+    {"nome":"BOLSA DE EPI", "regra":"TODOS", "tamanho":False, "data_fab":False},
 ]
 
 CHAPA, TELEFONE, EH_MOTORISTA, TAMANHO, DATA_FAB, STATUS, CONE_TIPO, CONE_QTD = range(8)
@@ -169,7 +172,6 @@ def get_justificados():
                 just[str(r.get('chapa','')).zfill(6)] = r
     except: pass
     return just
-
 def gerar_mascara_txt(dados_colab, lista_nao_conforme):
     txt = f"""========================================
     PEDIDO DE EPI - NÃO CONFORME - SESMT
@@ -177,25 +179,15 @@ def gerar_mascara_txt(dados_colab, lista_nao_conforme):
 DATA/HORA: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
 CHAPA: {dados_colab['chapa']}
 NOME: {dados_colab['nome']}
-CARGO: {dados_colab.get('cargo','')}
-TELEFONE: {dados_colab['telefone']}
-EH MOTORISTA: {dados_colab.get('eh_motorista','')}
 SUPERVISOR: {dados_colab['supervisor']}
 COORDENADOR: {dados_colab.get('coordenador','')}
-
 TOTAL NÃO CONFORME: {len(lista_nao_conforme)}
-
-ITENS NÃO CONFORME:
 """
     if not lista_nao_conforme:
         txt += "NENHUM - TODOS CONFORME\n"
     else:
         for i, r in enumerate(lista_nao_conforme, 1):
-            txt += f"{i}. {r['item']}\n"
-            if r.get('tamanho'): txt += f"   TAMANHO/QTD: {r.get('tamanho')}\n"
-            if r.get('data_fab'): txt += f"   FAB: {r.get('data_fab')} | VALIDADE: {r.get('validade')}\n"
-            txt += f"   STATUS: {r.get('status')}\n   ---\n"
-    txt += f"\nAss. Colaborador: ________________________\n\nTELEMONT - SESMT\n"
+            txt += f"{i}. {r['item']} - {r.get('status')}\n"
     nome_arq = f"MASCARA_{dados_colab['chapa']}_{datetime.datetime.now().strftime('%d%m%Y_%H%M')}_{uuid.uuid4().hex[:4]}.txt"
     caminho = os.path.join(PASTA_MASC, nome_arq)
     with open(caminho, "w", encoding="utf-8") as f: f.write(txt)
@@ -209,16 +201,18 @@ def enviar_email_nao_conforme(supervisor_nome, coordenador_nome, chapa, nome_col
         from email.mime.base import MIMEBase
         from email import encoders
         email_sup = EMAILS_SUP.get(supervisor_nome.upper()) if supervisor_nome else None
-        emails_destino = [email_sup] if email_sup else []
+        EMAIL_CC = os.environ.get("EMAIL_CC","").strip()
+        emails_destino = []
+        if email_sup: emails_destino.append(email_sup)
+        if EMAIL_CC: emails_destino.append(EMAIL_CC)
         if not emails_destino: return False, []
         EMAIL_USER = os.environ.get("EMAIL_USER", "").strip() or "botsesmt@gmail.com"
         EMAIL_PASS = os.environ.get("EMAIL_PASS", "").strip().replace(" ","") or "tcepcskwinxlfnsk"
         SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com").strip()
         SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
-        assunto = f"INSPEÇÃO NÃO CONFORME - CHAPA {chapa} - {nome_colab}"
-        corpo = f"CHAPA: {chapa}\nNOME: {nome_colab}\nSUPERVISOR: {supervisor_nome}\nCOORDENADOR: {coordenador_nome}\nTEL: {dados_colab.get('telefone','')}\n\nITENS NÃO CONFORME ({len(lista_nao_conforme)}):\n"
-        for r in lista_nao_conforme: corpo += f"- {r['item']} | TAM: {r.get('tamanho','')} | FAB: {r.get('data_fab','')}\n"
-        corpo += "\nMÁSCARA COMPLETA EM ANEXO.\n\nSESMT\n"
+        assunto = f"{'NÃO CONFORME' if lista_nao_conforme else 'CONFORME'} - CHAPA {chapa} - {nome_colab}"
+        corpo = f"CHAPA: {chapa}\nNOME: {nome_colab}\nSUPERVISOR: {supervisor_nome}\nCOORD: {coordenador_nome}\nTOTAL NC: {len(lista_nao_conforme)}\n"
+        for r in lista_nao_conforme: corpo += f"- {r['item']}\n"
         msg = MIMEMultipart()
         msg['From'] = EMAIL_USER
         msg['To'] = ", ".join(emails_destino)
@@ -243,7 +237,7 @@ def enviar_email_nao_conforme(supervisor_nome, coordenador_nome, chapa, nome_col
 
 app_flask = Flask(__name__)
 @app_flask.route('/')
-def home(): return f"BOT SESMT ON - <a href='/base'>BASE ESTATISTICA</a> | <a href='/excel'>EXCEL</a> | <a href='/graficos'>GRAFICOS</a>"
+def home(): return f"BOT SESMT ON - <a href='/base'>BASE ESTATISTICA</a> | <a href='/graficos'>GRAFICOS</a> | <a href='/admin?senha={ADMIN_SENHA}'>ADMIN</a>"
 @app_flask.route('/mascaras/<path:filename>')
 def masc(filename): return send_from_directory(PASTA_MASC, filename)
 
@@ -265,14 +259,10 @@ def gerar_excel_completo(caminho="/tmp/sesmt_completo.xlsx", filtro_supervisor="
     df = pd.DataFrame(linhas)
     df_nc = df[df['status']=='Não Conforme']
     resumo = df_nc.groupby('item').size().reset_index(name='QTD_NAO_CONFORME').sort_values('QTD_NAO_CONFORME', ascending=False)
-    resumo_sup = df_nc.groupby(['supervisor','item']).size().reset_index(name='QTD')
-    resumo_coord = df_nc.groupby(['coordenador','item']).size().reset_index(name='QTD')
     with pd.ExcelWriter(caminho, engine='openpyxl') as writer:
         resumo.to_excel(writer, sheet_name='RESUMO_NAO_CONFORME', index=False)
         df.to_excel(writer, sheet_name='DETALHADO_FILTRADO', index=False)
         df_nc.to_excel(writer, sheet_name='SO_NAO_CONFORME', index=False)
-        resumo_sup.to_excel(writer, sheet_name='POR_SUPERVISOR', index=False)
-        resumo_coord.to_excel(writer, sheet_name='POR_COORDENADOR', index=False)
     return caminho
 
 @app_flask.route('/excel')
@@ -318,24 +308,20 @@ def base():
     opt_coord = "".join([f"<option value='{c}' {'selected' if c==filtro_coord else ''}>{c}</option>" for c in todos_coord])
     html = f"""
     <html><head><meta charset='utf-8'><title>BASE ESTATISTICA</title>
-    <style>body{{font-family:Arial;padding:15px;background:#f0f2f5}} .card{{background:white;padding:15px;border-radius:10px;margin-bottom:20px;box-shadow:0 2px 5px rgba(0,0,0,0.1)}} table{{width:100%;border-collapse:collapse;background:white;font-size:12px}} th,td{{border:1px solid #ddd;padding:7px;text-align:left}} th{{background:#0F4C8F;color:white}} .btn{{padding:8px 14px;border-radius:5px;color:white;text-decoration:none;display:inline-block;font-size:12px;margin:2px}} .badge{{padding:3px 8px;border-radius:10px;color:white;font-weight:bold}} h2{{color:#0F4C8F}} select{{padding:8px;min-width:300px}}</style></head><body>
-    <h2>📊 ESTATÍSTICA POR SUPERVISOR - BASE SESMT</h2>
+    <style>body{{font-family:Arial;padding:15px;background:#f0f2f5}} .card{{background:white;padding:15px;border-radius:10px;margin-bottom:20px}} table{{width:100%;border-collapse:collapse;background:white;font-size:12px}} th,td{{border:1px solid #ddd;padding:7px}} th{{background:#0F4C8F;color:white}} .btn{{padding:8px 14px;border-radius:5px;color:white;text-decoration:none;display:inline-block;font-size:12px;margin:2px}} .badge{{padding:3px 8px;border-radius:10px;color:white;font-weight:bold}} h2{{color:#0F4C8F}} select{{padding:8px;min-width:300px}}</style></head><body>
+    <h2>📊 ESTATÍSTICA - BASE SESMT</h2>
+    <a class='btn' style='background:red' href='/admin?senha={ADMIN_SENHA}'>🔒 ADMIN - CONTROLE</a>
     <div class='card' style='background:#e8f0fe;border:2px solid #0F4C8F'>
-        <form method='get'><b>FILTRAR ESTATÍSTICA:</b><br>
-            SUPERVISOR: <select name='supervisor'><option value=''>-- TODOS SUPERVISORES --</option>{opt_sup}</select>
-            COORDENADOR: <select name='coordenador'><option value=''>-- TODOS COORDENADORES --</option>{opt_coord}</select>
+        <form method='get'><b>FILTRAR:</b><br>
+            SUPERVISOR: <select name='supervisor'><option value=''>-- TODOS --</option>{opt_sup}</select>
+            COORDENADOR: <select name='coordenador'><option value=''>-- TODOS --</option>{opt_coord}</select>
             <button class='btn' style='background:#0F4C8F'>🔍 FILTRAR</button>
             <a class='btn' style='background:#6c757d' href='/base'>Limpar</a>
             <a class='btn' style='background:green' href='/base_excel?supervisor={filtro_sup}&coordenador={filtro_coord}'>📥 EXCEL FILTRADO</a>
-            <a class='btn' style='background:#fd7e14' href='/base_estatistica_excel?supervisor={filtro_sup}&coordenador={filtro_coord}'>📊 EXCEL ESTATÍSTICA</a>
         </form>
-        <div style='margin-top:10px;font-weight:bold'>FILTRO ATUAL: Supervisor={filtro_sup or 'TODOS'} | Coordenador={filtro_coord or 'TODOS'}</div>
     </div>
-    <a class='btn' style='background:#0F4C8F' href='/graficos'>📈 DASHBOARD NÃO CONFORME</a>
-    <a class='btn' style='background:green' href='/excel'>📥 EXCEL INSPEÇÕES</a>
-    <br><br>
     """
-    html += "<div class='card'><h3>RESUMO GERAL FILTRADO</h3><table><tr><th>SUPERVISOR</th><th>COORDENADOR</th><th>TOTAL</th><th>FEITOS</th><th>JUSTIFICADOS</th><th>PENDENTES</th><th>%</th></tr>"
+    html += "<div class='card'><h3>RESUMO GERAL</h3><table><tr><th>SUPERVISOR</th><th>TOTAL</th><th>FEITOS</th><th>JUST</th><th>PEND</th><th>%</th></tr>"
     for sup, lista_colab in sorted(por_supervisor.items()):
         total = len(lista_colab)
         feitos_sup = sum(1 for c in lista_colab if c['chapa'] in feitos)
@@ -343,35 +329,8 @@ def base():
         pendentes = total - feitos_sup - just_sup
         perc = int(((feitos_sup+just_sup)/total*100)) if total else 0
         cor = "green" if perc>=100 else "orange" if perc>=50 else "red"
-        coord_exemplo = lista_colab[0]['coordenador'] if lista_colab else ''
-        html += f"<tr><td><b>{sup}</b></td><td>{coord_exemplo}</td><td style='text-align:center'>{total}</td><td style='text-align:center;color:green'><b>{feitos_sup}</b></td><td style='text-align:center;color:blue'><b>{just_sup}</b></td><td style='text-align:center;color:red'><b>{pendentes}</b></td><td><span class='badge' style='background:{cor}'>{perc}%</span></td></tr>"
-    html += "</table></div>"
-    for sup, lista_colab in sorted(por_supervisor.items()):
-        total = len(lista_colab)
-        feitos_sup = [c for c in lista_colab if c['chapa'] in feitos]
-        just_sup = [c for c in lista_colab if c['chapa'] in justificados]
-        pendentes_sup = [c for c in lista_colab if c['chapa'] not in feitos and c['chapa'] not in justificados]
-        html += f"<div class='card' id='sup_{sup.replace(' ','_')}'><h3>👷 {sup} - {total} colaboradores | Coord: {lista_colab[0]['coordenador'] if lista_colab else ''}</h3>"
-        html += f"<div>✅ Feitos: <b style='color:green'>{len(feitos_sup)}</b> | 📝 Justificados: <b style='color:blue'>{len(just_sup)}</b> | ⏳ Pendentes: <b style='color:red'>{len(pendentes_sup)}</b></div><br>"
-        if pendentes_sup:
-            html += "<h4>⏳ PENDENTES</h4><table><tr><th>CHAPA</th><th>NOME</th><th>CARGO</th><th>COORD</th><th>AÇÃO</th></tr>"
-            for c in pendentes_sup:
-                html += f"<tr><td><b>{c['chapa']}</b></td><td>{c['nome']}</td><td>{c['cargo']}</td><td>{c['coordenador']}</td><td><a class='btn' style='background:#ffc107;color:black' href='/justificar_form/{c['chapa']}?supervisor={filtro_sup}&coordenador={filtro_coord}'>📝 Justificar</a></td></tr>"
-            html += "</table><br>"
-        if feitos_sup:
-            html += "<h4>✅ FEITOS</h4><table><tr><th>CHAPA</th><th>NOME</th><th>DATA</th><th>NC</th><th>AÇÃO</th></tr>"
-            for c in feitos_sup:
-                det = inspecoes_detalhe.get(c['chapa'],{})
-                html += f"<tr><td>{c['chapa']}</td><td>{c['nome']}</td><td>{det.get('data','')}</td><td style='color:red'><b>{det.get('nao_conf',0)}</b></td><td><a class='btn' style='background:#0F4C8F' href='/detalhe/{c['chapa']}'>Ver</a> <a class='btn' style='background:#dc3545' href='/apagar/{c['chapa']}'>Excluir</a></td></tr>"
-            html += "</table><br>"
-        if just_sup:
-            html += "<h4>📝 JUSTIFICADOS</h4><table><tr><th>CHAPA</th><th>NOME</th><th>MOTIVO</th><th>DATA</th><th>AÇÃO</th></tr>"
-            for c in just_sup:
-                j = justificados.get(c['chapa'],{})
-                html += f"<tr><td>{c['chapa']}</td><td>{c['nome']}</td><td>{j.get('motivo','')}</td><td>{j.get('data','')}</td><td><a class='btn' style='background:#6c757d' href='/remover_just/{c['chapa']}?supervisor={filtro_sup}&coordenador={filtro_coord}'>Remover</a></td></tr>"
-            html += "</table>"
-        html += "</div>"
-    html += "</body></html>"
+        html += f"<tr><td><b>{sup}</b></td><td>{total}</td><td style='color:green'><b>{feitos_sup}</b></td><td style='color:blue'><b>{just_sup}</b></td><td style='color:red'><b>{pendentes}</b></td><td><span class='badge' style='background:{cor}'>{perc}%</span></td></tr>"
+    html += "</table></div></body></html>"
     return html
 
 @app_flask.route('/base_excel')
@@ -398,19 +357,15 @@ def base_excel():
         if filtro_sup and filtro_sup not in sup: continue
         if filtro_coord and filtro_coord not in coord: continue
         status = "FEITO" if ch6 in feitos else "JUSTIFICADO" if ch6 in justificados else "PENDENTE"
-        motivo = justificados.get(ch6,{}).get('motivo','') if ch6 in justificados else ''
-        linhas.append({"CHAPA":ch6,"NOME":dados.get('nome',''),"CARGO":dados.get('cargo',''),"SUPERVISOR":sup,"COORDENADOR":coord,"STATUS":status,"MOTIVO_JUST":motivo})
+        linhas.append({"CHAPA":ch6,"NOME":dados.get('nome',''),"SUPERVISOR":sup,"COORDENADOR":coord,"STATUS":status})
     df = pd.DataFrame(linhas)
     caminho="/tmp/base_filtrada.xlsx"
     with pd.ExcelWriter(caminho, engine='openpyxl') as writer:
         df.to_excel(writer, sheet_name='BASE_FILTRADA', index=False)
-    nome = f"BASE_{filtro_sup or 'TODOS'}_{filtro_coord or 'TODOS'}_{datetime.datetime.now().strftime('%d%m%Y_%H%M')}.xlsx"
-    return send_file(caminho, as_attachment=True, download_name=nome)
+    return send_file(caminho, as_attachment=True, download_name=f"BASE_{filtro_sup or 'TODOS'}.xlsx")
 
 @app_flask.route('/base_estatistica_excel')
 def base_estatistica_excel():
-    filtro_sup = request.args.get('supervisor','').strip().upper()
-    filtro_coord = request.args.get('coordenador','').strip().upper()
     try:
         import pandas as pd
     except: return "Instale pandas"
@@ -426,11 +381,7 @@ def base_estatistica_excel():
         ch6 = chapa_key.zfill(6)
         if len(ch6)!=6 or ch6 in chapas_unicas: continue
         chapas_unicas.add(ch6)
-        sup = dados.get('supervisor','')
-        coord = dados.get('coordenador','')
-        if filtro_sup and filtro_sup not in sup: continue
-        if filtro_coord and filtro_coord not in coord: continue
-        por_sup[sup].append((ch6,dados))
+        por_sup[dados.get('supervisor','')].append((ch6,dados))
     resumo=[]
     for sup, lista in por_sup.items():
         total=len(lista)
@@ -438,78 +389,105 @@ def base_estatistica_excel():
         just_sup=sum(1 for ch,_ in lista if ch in justificados)
         pend=total-feitos_sup-just_sup
         perc=int((feitos_sup+just_sup)/total*100) if total else 0
-        resumo.append({"SUPERVISOR":sup,"COORDENADOR":lista[0][1].get('coordenador','') if lista else '',"TOTAL":total,"FEITOS":feitos_sup,"JUSTIFICADOS":just_sup,"PENDENTES":pend,"PERC_CONCLUIDO":perc})
+        resumo.append({"SUPERVISOR":sup,"TOTAL":total,"FEITOS":feitos_sup,"JUSTIFICADOS":just_sup,"PENDENTES":pend,"PERC":perc})
     df = pd.DataFrame(resumo)
     caminho="/tmp/estatistica.xlsx"
     with pd.ExcelWriter(caminho, engine='openpyxl') as writer:
         df.to_excel(writer, sheet_name='ESTATISTICA', index=False)
-    nome = f"ESTATISTICA_{filtro_sup or 'TODOS'}_{filtro_coord or 'TODOS'}_{datetime.datetime.now().strftime('%d%m%Y_%H%M')}.xlsx"
-    return send_file(caminho, as_attachment=True, download_name=nome)
+    return send_file(caminho, as_attachment=True, download_name="ESTATISTICA.xlsx")
 
-@app_flask.route('/justificar_form/<chapa>')
-def justificar_form(chapa):
-    filtro_sup = request.args.get('supervisor','')
-    filtro_coord = request.args.get('coordenador','')
-    chapa = str(chapa).zfill(6)
-    dados = FUNCIONARIOS.get(chapa, {})
-    nome = dados.get('nome','')
-    sup = dados.get('supervisor','')
-    return f"""
-    <html><head><meta charset='utf-8'><title>Justificar</title>
-    <style>body{{font-family:Arial;padding:20px;background:#f0f2f5}} .card{{background:white;padding:20px;border-radius:10px;max-width:600px;margin:auto}} input,textarea,select{{width:100%;padding:10px;margin:10px 0}} .btn{{padding:10px 20px;background:#0F4C8F;color:white;border:none;border-radius:5px;cursor:pointer}}</style>
-    </head><body><div class='card'>
-    <h2>📝 Justificar Chapa {chapa}</h2>
-    <p><b>Nome:</b> {nome}<br><b>Supervisor:</b> {sup}</p>
-    <form method='post' action='/justificar/{chapa}?supervisor={filtro_sup}&coordenador={filtro_coord}'>
-        <label>Motivo:</label>
-        <select name='motivo' required>
-            <option value=''>Selecione...</option>
-            <option value='Férias'>Férias</option>
-            <option value='Afastado - INSS'>Afastado - INSS</option>
-            <option value='Afastado - Acidente'>Afastado - Acidente</option>
-            <option value='Desligado'>Desligado</option>
-            <option value='Transferido'>Transferido</option>
-            <option value='Falta'>Falta</option>
-            <option value='Licença'>Licença</option>
-            <option value='Outro'>Outro</option>
-        </select>
-        <textarea name='obs' placeholder='Observação'></textarea>
-        <button class='btn' type='submit'>✅ Salvar</button>
-        <a href='/base?supervisor={filtro_sup}&coordenador={filtro_coord}'>Cancelar</a>
-    </form></div></body></html>
-    """
-
-@app_flask.route('/justificar/<chapa>', methods=['POST'])
-def justificar(chapa):
-    filtro_sup = request.args.get('supervisor','')
-    filtro_coord = request.args.get('coordenador','')
-    chapa = str(chapa).zfill(6)
-    dados = FUNCIONARIOS.get(chapa, {})
-    motivo = request.form.get('motivo','')
-    obs = request.form.get('obs','')
-    motivo_full = f"{motivo} - {obs}" if obs else motivo
-    data = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
-    with open(ARQ_JUST, "a", newline="", encoding="utf-8") as f:
-        csv.writer(f).writerow([data, chapa, dados.get('nome',''), dados.get('supervisor',''), dados.get('coordenador',''), motivo_full])
-    return f"<script>alert('Chapa {chapa} justificada!');window.location='/base?supervisor={filtro_sup}&coordenador={filtro_coord}';</script>"
-
-@app_flask.route('/remover_just/<chapa>')
-def remover_just(chapa):
-    filtro_sup = request.args.get('supervisor','')
-    filtro_coord = request.args.get('coordenador','')
-    chapa = str(chapa).zfill(6)
-    novas=[]
+@app_flask.route('/admin')
+def admin_panel():
+    senha = request.args.get('senha','')
+    if senha != ADMIN_SENHA:
+        return f"<html><head><meta charset='utf-8'></head><body><form method='get'><h2>ADMIN</h2><input type='password' name='senha' placeholder='Senha'><button>Entrar</button></form></body></html>"
+    total_inspecoes = 0
+    chapas_feitas = set()
     try:
-        with open(ARQ_JUST, encoding="utf-8") as f:
+        with open(ARQ_INS, encoding="utf-8") as f:
             for r in csv.DictReader(f):
-                if str(r.get('chapa','')).zfill(6)!=chapa: novas.append(r)
-        with open(ARQ_JUST, "w", newline="", encoding="utf-8") as f:
-            w=csv.DictWriter(f, fieldnames=["data","chapa","nome","supervisor","coordenador","motivo"])
-            w.writeheader(); w.writerows(novas)
+                total_inspecoes+=1
+                chapas_feitas.add(str(r.get('chapa','')).zfill(6))
     except: pass
-    return f"<script>alert('Justificativa removida!');window.location='/base?supervisor={filtro_sup}&coordenador={filtro_coord}';</script>"
+    total_func = len(set([k for k in FUNCIONARIOS.keys() if len(k)==6]))
+    html = f"""
+    <html><head><meta charset='utf-8'><title>ADMIN</title>
+    <style>body{{font-family:Arial;padding:20px;background:#f0f2f5}} .card{{background:white;padding:20px;border-radius:10px;margin-bottom:20px}} th,td{{border:1px solid #ddd;padding:8px;font-size:12px}} th{{background:#dc3545;color:white}} .btn{{padding:10px 15px;border-radius:5px;color:white;text-decoration:none;display:inline-block;margin:3px;border:none;cursor:pointer}} input,select{{padding:10px;margin:5px;width:300px}}</style>
+    </head><body><h2>🔒 ADMIN - CONTROLE</h2><a class='btn' style='background:#0F4C8F' href='/base'>BASE</a> <a class='btn' style='background:#6c757d' href='/graficos'>Gráficos</a>
+    <div class='card'>Total Func: {total_func} | Feitas: {len(chapas_feitas)} | Registros: {total_inspecoes}</div>
+    <div class='card'><h3>✅ LIBERAR CHAPA</h3><form method='get' action='/admin/liberar'><input type='hidden' name='senha' value='{ADMIN_SENHA}'><input name='chapa' placeholder='CHAPA' required><button class='btn' style='background:#28a745'>LIBERAR</button></form></div>
+    <div class='card'><h3>🗑️ ZERAR TUDO</h3><form method='get' action='/admin/zerar' onsubmit="return confirm('ZERAR TUDO?');"><input type='hidden' name='senha' value='{ADMIN_SENHA}'><input name='confirmar' placeholder='Digite ZERAR' required><button class='btn' style='background:#dc3545'>ZERAR</button></form></div>
+    <div class='card'><h3>👷 EXCLUIR SUPERVISOR</h3><form method='get' action='/admin/excluir_supervisor'><input type='hidden' name='senha' value='{ADMIN_SENHA}'><input name='supervisor' placeholder='Nome supervisor' style='width:400px' required><select name='tipo'><option value='equipe'>Excluir equipe</option><option value='so_supervisor'>Só supervisor</option><option value='nome'>Por nome</option></select><button class='btn' style='background:#ff6b00'>EXCLUIR</button></form></div>
+    </body></html>
+    """
+    return html
 
-# ===== DASHBOARD SEM OS 2 GRAFICOS QUE VC MOSTROU NA IMAGEM =====
+@app_flask.route('/admin/liberar')
+def admin_liberar():
+    senha = request.args.get('senha','')
+    if senha != ADMIN_SENHA: return "Senha inválida"
+    chapa = str(request.args.get('chapa','')).zfill(6)
+    for arq, fields in [(ARQ_INS, ["data","chapa","nome","cargo","supervisor","coordenador","telefone","eh_motorista","item","tamanho","data_fab","validade","status"]), (ARQ_JUST, ["data","chapa","nome","supervisor","coordenador","motivo"]), (ARQ_CAD, ["chapa","nome","cargo","data_admissao","supervisor","coordenador","telefone","id_telegram","eh_motorista"])]:
+        novas=[]
+        try:
+            with open(arq, encoding="utf-8") as f:
+                for r in csv.DictReader(f):
+                    if str(r.get('chapa','')).zfill(6)!=chapa: novas.append(r)
+            with open(arq, "w", newline="", encoding="utf-8") as f:
+                w=csv.DictWriter(f, fieldnames=fields)
+                w.writeheader(); w.writerows(novas)
+        except: pass
+    return f"<script>alert('Chapa {chapa} LIBERADA!');window.location='/admin?senha={ADMIN_SENHA}';</script>"
+
+@app_flask.route('/admin/zerar')
+def admin_zerar():
+    senha = request.args.get('senha','')
+    confirmar = request.args.get('confirmar','')
+    if senha != ADMIN_SENHA: return "Senha inválida"
+    if confirmar.upper() != "ZERAR": return f"<script>alert('Digite ZERAR');window.location='/admin?senha={ADMIN_SENHA}';</script>"
+    for arq, head in [(ARQ_INS, ["data","chapa","nome","cargo","supervisor","coordenador","telefone","eh_motorista","item","tamanho","data_fab","validade","status"]), (ARQ_CAD, ["chapa","nome","cargo","data_admissao","supervisor","coordenador","telefone","id_telegram","eh_motorista"]), (ARQ_PEDIDOS, ["data","chapa","nome","telefone","supervisor","mascara_txt"]), (ARQ_JUST, ["data","chapa","nome","supervisor","coordenador","motivo"])]:
+        try:
+            with open(arq, "w", newline="", encoding="utf-8") as f: csv.writer(f).writerow(head)
+        except: pass
+    return f"<script>alert('ZERADO!');window.location='/admin?senha={ADMIN_SENHA}';</script>"
+
+@app_flask.route('/admin/excluir_supervisor')
+def admin_excluir_sup():
+    senha = request.args.get('senha','')
+    if senha != ADMIN_SENHA: return "Senha inválida"
+    supervisor = request.args.get('supervisor','').strip().upper()
+    tipo = request.args.get('tipo','equipe')
+    linhas=[]; fieldnames=None
+    try:
+        with open(ARQ_FUNC, encoding="utf-8-sig") as f:
+            primeira = f.readline()
+            delim = ";" if ";" in primeira else ","
+            f.seek(0)
+            reader = csv.DictReader(f, delimiter=delim)
+            fieldnames = reader.fieldnames
+            for r in reader: linhas.append(r)
+    except Exception as e: return f"Erro: {e}"
+    sup_col = next((c for c in fieldnames if "superv" in c.lower()), fieldnames[2])
+    nome_col = next((c for c in fieldnames if "nome" in c.lower()), fieldnames[1])
+    chapa_col = fieldnames[0]
+    depois=[]
+    for r in linhas:
+        chapa = str(r.get(chapa_col,"")).zfill(6)
+        nome_sup = str(r.get(sup_col,"")).strip().upper()
+        nome_colab = str(r.get(nome_col,"")).strip().upper()
+        if tipo == 'equipe' and (supervisor in nome_sup or supervisor == chapa): continue
+        if tipo == 'so_supervisor' and (supervisor == chapa or supervisor in nome_colab): continue
+        if tipo == 'nome' and supervisor in nome_colab: continue
+        depois.append(r)
+    try:
+        with open(ARQ_FUNC, "w", newline="", encoding="utf-8") as f:
+            w=csv.DictWriter(f, fieldnames=fieldnames)
+            w.writeheader(); w.writerows(depois)
+    except Exception as e: return f"Erro salvar: {e}"
+    carregar_funcionarios(); carregar_emails_sup()
+    return f"<script>alert('Excluídos {len(linhas)-len(depois)} registros!');window.location='/admin?senha={ADMIN_SENHA}';</script>"
+
+# ===== DASHBOARD CORRIGIDO - ITEM NA ESQUERDA SOMANDO =====
 @app_flask.route('/graficos')
 def graficos():
     filtro_sup = request.args.get('supervisor','').strip().upper()
@@ -525,33 +503,92 @@ def graficos():
                 linhas.append(r)
     except: linhas=[]
     df_nc = [r for r in linhas if str(r.get('status','')).strip() == 'Não Conforme']
+    
     todos_sup = sorted(SUPERVISORES_LISTA)
     todos_coord = sorted(COORDENADORES_LISTA)
     options_sup = "".join([f"<option value='{s}' {'selected' if s==filtro_sup else ''}>{s}</option>" for s in todos_sup])
     options_coord = "".join([f"<option value='{c}' {'selected' if c==filtro_coord else ''}>{c}</option>" for c in todos_coord])
+    
+    # CONTAGENS
+    cont_item = Counter([r.get('item','').strip() for r in df_nc if r.get('item')])
     cont_sup = Counter([r.get('supervisor','').strip() for r in df_nc if r.get('supervisor')])
     cont_sup_item = defaultdict(Counter)
     for r in df_nc:
         sup = r.get('supervisor','').strip()
         item = r.get('item','').strip()
         if sup and item: cont_sup_item[sup][item] += 1
+
+    # TABELA ITEM NA ESQUERDA - SOMA GERAL POR ITEM
+    tabela_item_geral = "".join([f"<tr><td><b>{item}</b></td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for item,qtd in cont_item.most_common()])
+    
     tabela_sup = "".join([f"<tr><td><b>{sup}</b></td><td>{EMAILS_SUP.get(sup,'')}</td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for sup,qtd in cont_sup.most_common()])
     tabela_sup_detalhada = "".join([f"<tr><td>{sup}</td><td>{item}</td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for sup, counter in cont_sup_item.items() for item,qtd in counter.most_common()])
+    
     cont_item_tam = defaultdict(Counter)
     for r in df_nc:
         cont_item_tam[r.get('item','')][r.get('tamanho','')] += 1
     tabela_item_tamanho = "".join([f"<tr><td>{item}</td><td><b>{tam}</b></td><td style='color:red;text-align:center'><b>{qtd}</b></td></tr>" for item, c in cont_item_tam.items() for tam,qtd in c.most_common() if tam])
+
     filtro_txt = f"FILTRO: Supervisor={filtro_sup or 'TODOS'} | Coordenador={filtro_coord or 'TODOS'} - Total NC: {len(df_nc)}" if filtro_sup or filtro_coord else f"SEM FILTRO - Total NC: {len(df_nc)}"
+    
     html = f"""
     <html><head><meta charset='utf-8'><title>DASHBOARD NÃO CONFORME</title>
     <style>body{{font-family:Arial;padding:20px;background:#f0f2f5}} .card{{background:white;padding:20px;border-radius:10px;margin-bottom:20px}} h2{{color:#0F4C8F}} table{{border-collapse:collapse;width:100%}} th,td{{border:1px solid #ddd;padding:8px;font-size:13px}} th{{background:#0F4C8F;color:white}} select{{padding:8px;min-width:280px}} .btn{{padding:8px 14px;border-radius:5px;color:white;background:#0F4C8F;text-decoration:none}} .btn-green{{background:green}}</style></head><body>
-    <h2>📊 DASHBOARD SESMT - ITENS NÃO CONFORME</h2><a href='/base'>BASE ESTATISTICA</a> | <a href='/emails'>EMAILS</a>
+    <h2>📊 DASHBOARD SESMT - ITENS NÃO CONFORME</h2><a href='/base'>BASE ESTATISTICA</a> | <a href='/emails'>EMAILS</a> | <a href='/admin?senha={ADMIN_SENHA}'>ADMIN</a>
     <div class='card' style='background:#e8f0fe;border:2px solid #0F4C8F'>
         <form method='get' style='display:flex;gap:15px;flex-wrap:wrap'><div><b>SUPERVISOR:</b><br><select name='supervisor'><option value=''>-- TODOS SUPERVISORES --</option>{options_sup}</select></div><div><b>COORDENADOR:</b><br><select name='coordenador'><option value=''>-- TODOS COORDENADORES --</option>{options_coord}</select></div><div><br><button class='btn'>🔍 FILTRAR</button> <a href='/graficos' class='btn' style='background:#6c757d'>Limpar</a> <a href='/excel?supervisor={filtro_sup}&coordenador={filtro_coord}' class='btn btn-green'>📥 EXCEL FILTRO</a></div></form><div style='margin-top:10px;color:#0F4C8F;font-weight:bold'>{filtro_txt}</div>
     </div>
-    <div style='display:flex;gap:20px;flex-wrap:wrap'><div class='card' style='flex:1'><h3>👷 SOMA POR SUPERVISOR - NÃO CONFORME</h3><table><tr><th>SUPERVISOR</th><th>EMAIL</th><th>QTD NC</th></tr>{tabela_sup}</table><br><table><tr><th>SUP</th><th>ITEM</th><th>QTD</th></tr>{tabela_sup_detalhada}</table></div><div class='card' style='flex:1'><h3>📦 Item + Tamanho NÃO CONFORME</h3><table><tr><th>ITEM</th><th>TAM</th><th>QTD</th></tr>{tabela_item_tamanho}</table></div></div>
+    
+    <div style='display:flex;gap:20px;flex-wrap:wrap'>
+        <div class='card' style='flex:1;min-width:400px'>
+            <h3>📦 ITEM NÃO CONFORME - SOMA GERAL (ESQUERDA)</h3>
+            <table><tr><th>ITEM</th><th>QTD NC</th></tr>{tabela_item_geral if tabela_item_geral else "<tr><td colspan=2>Sem dados NC</td></tr>"}</table>
+            <br>
+            <h3>👷 SOMA POR SUPERVISOR - NÃO CONFORME</h3>
+            <table><tr><th>SUPERVISOR</th><th>EMAIL</th><th>QTD NC</th></tr>{tabela_sup}</table>
+            <br>
+            <h3>👷 SUP + ITEM - NÃO CONFORME</h3>
+            <table><tr><th>SUP</th><th>ITEM</th><th>QTD</th></tr>{tabela_sup_detalhada}</table>
+        </div>
+        <div class='card' style='flex:1;min-width:400px'>
+            <h3>📦 Item + Tamanho NÃO CONFORME</h3>
+            <table><tr><th>ITEM</th><th>TAM</th><th>QTD</th></tr>{tabela_item_tamanho if tabela_item_tamanho else "<tr><td colspan=3>Sem tamanho</td></tr>"}</table>
+        </div>
+    </div>
     </body></html>"""
     return html
+
+@app_flask.route('/justificar_form/<chapa>')
+def justificar_form(chapa):
+    chapa = str(chapa).zfill(6)
+    dados = FUNCIONARIOS.get(chapa, {})
+    return f"<html><body><h2>Justificar {chapa} - {dados.get('nome','')}</h2><form method='post' action='/justificar/{chapa}'><select name='motivo' required><option value='Férias'>Férias</option><option value='Desligado'>Desligado</option><option value='Outro'>Outro</option></select><textarea name='obs'></textarea><button>Salvar</button></form></body></html>"
+
+@app_flask.route('/justificar/<chapa>', methods=['POST'])
+def justificar(chapa):
+    chapa = str(chapa).zfill(6)
+    dados = FUNCIONARIOS.get(chapa, {})
+    motivo = request.form.get('motivo','')
+    obs = request.form.get('obs','')
+    motivo_full = f"{motivo} - {obs}" if obs else motivo
+    data = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+    with open(ARQ_JUST, "a", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow([data, chapa, dados.get('nome',''), dados.get('supervisor',''), dados.get('coordenador',''), motivo_full])
+    return f"<script>alert('Justificada!');window.location='/base';</script>"
+
+@app_flask.route('/remover_just/<chapa>')
+def remover_just(chapa):
+    chapa = str(chapa).zfill(6)
+    novas=[]
+    try:
+        with open(ARQ_JUST, encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                if str(r.get('chapa','')).zfill(6)!=chapa: novas.append(r)
+        with open(ARQ_JUST, "w", newline="", encoding="utf-8") as f:
+            w=csv.DictWriter(f, fieldnames=["data","chapa","nome","supervisor","coordenador","motivo"])
+            w.writeheader(); w.writerows(novas)
+    except: pass
+    return f"<script>alert('Removida!');window.location='/base';</script>"
 
 @app_flask.route('/emails')
 def ver_emails():
@@ -583,7 +620,7 @@ def apagar(chapa):
             w=csv.DictWriter(f, fieldnames=["data","chapa","nome","cargo","supervisor","coordenador","telefone","eh_motorista","item","tamanho","data_fab","validade","status"])
             w.writeheader(); w.writerows(novas)
     except: pass
-    return f"<script>alert('Chapa {chapa} liberada!');window.location='/base';</script>"
+    return f"<script>alert('Liberada!');window.location='/base';</script>"
 
 @app_flask.route('/exportar')
 def exportar(): return send_file(ARQ_INS, as_attachment=True)
@@ -605,7 +642,7 @@ async def chapa_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not func: await update.message.reply_text(f"❌ Chapa {chapa} não existe."); return CHAPA
     if ja_inspecionou(chapa): 
         kb = ReplyKeyboardMarkup([[KeyboardButton("🔄 NOVA INSPEÇÃO - /start")]], resize_keyboard=True)
-        await update.message.reply_text(f"⛔ Chapa {chapa} já fez inspeção!", reply_markup=kb); return ConversationHandler.END
+        await update.message.reply_text(f"⛔ Chapa {chapa} já fez inspeção! Aguarde liberação do ADMIN.", reply_markup=kb); return ConversationHandler.END
     just = get_justificados()
     if chapa in just:
         kb = ReplyKeyboardMarkup([[KeyboardButton("🔄 NOVA INSPEÇÃO - /start")]], resize_keyboard=True)
@@ -713,7 +750,7 @@ async def status_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await proximo_item(update, context)
 
 async def finalizar(update, context):
-    await update.message.reply_text("⏳ AGUARDANDO... Criando máscara de Não Conforme e enviando e-mail para o supervisor...")
+    await update.message.reply_text("⏳ AGUARDANDO... Criando máscara e enviando e-mail...")
     try: await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     except: pass
     chapa=context.user_data['chapa']; func=context.user_data['func']; tel=context.user_data['telefone']; eh_mot=context.user_data['eh_motorista']
@@ -722,20 +759,19 @@ async def finalizar(update, context):
     with open(ARQ_INS, "a", newline="", encoding="utf-8") as f:
         w=csv.writer(f)
         for r in resultados: w.writerow([data_hora, chapa, func['nome'], func['cargo'], func['supervisor'], func['coordenador'], tel, eh_mot, r['item'], r['tamanho'], r['data_fab'], r['validade'], r['status']])
-    dados_colab={"chapa":chapa,"nome":func['nome'],"cargo":func['cargo'],"data_admissao":func['admissao'],"supervisor":func['supervisor'],"coordenador":func['coordenador'],"telefone":tel,"eh_motorista":eh_mot}
+    dados_colab={"chapa":chapa,"nome":func['nome'],"cargo":func['cargo'],"supervisor":func['supervisor'],"coordenador":func['coordenador'],"telefone":tel,"eh_motorista":eh_mot}
     caminho_txt, txt_conteudo = gerar_mascara_txt(dados_colab, nao_conf)
     with open(ARQ_PEDIDOS, "a", newline="", encoding="utf-8") as f: csv.writer(f).writerow([data_hora, chapa, func['nome'], tel, func['supervisor'], txt_conteudo.replace("\n"," | ")])
     enviado=False; dest=[]
     if nao_conf:
-        try: await update.message.reply_text(f"📧 Enviando e-mail para supervisor {func['supervisor']}...")
-        except: pass
+        await update.message.reply_text(f"📧 Enviando e-mail para supervisor {func['supervisor']}...")
         enviado, dest = enviar_email_nao_conforme(func['supervisor'], func['coordenador'], chapa, func['nome'], nao_conf, caminho_txt, dados_colab)
-    msg=f"✅ INSPEÇÃO FINALIZADA!\n\nCHAPA: {chapa}\nNOME: {func['nome']}\nNÃO CONFORME: {len(nao_conf)}\n\n📋 MÁSCARA:\n{txt_conteudo}"
-    if enviado: msg+=f"\n\n📧 E-mail enviado para SUPERVISOR: {', '.join(dest)}"
-    elif nao_conf: msg+=f"\n\n⚠️ E-mail não enviado - verifique Render"
+    msg=f"✅ FINALIZADA!\nCHAPA: {chapa}\nNÃO CONFORME: {len(nao_conf)}\n\n{txt_conteudo}"
+    if enviado: msg+=f"\n\n📧 E-mail: {', '.join(dest)}"
+    elif nao_conf: msg+=f"\n\n❌ E-MAIL NÃO ENVIADO - Verifique EMAIL_USER/EMAIL_PASS no Render"
     await update.message.reply_text(msg)
     if os.path.exists(caminho_txt):
-        await context.bot.send_document(chat_id=update.effective_chat.id, document=open(caminho_txt, "rb"), filename=os.path.basename(caminho_txt), caption="📄 MÁSCARA TXT")
+        await context.bot.send_document(chat_id=update.effective_chat.id, document=open(caminho_txt, "rb"), filename=os.path.basename(caminho_txt))
     kb = ReplyKeyboardMarkup([[KeyboardButton("🔄 NOVA INSPEÇÃO - /start")]], resize_keyboard=True)
     await update.message.reply_text("👇 Para nova inspeção:", reply_markup=kb)
     return ConversationHandler.END
