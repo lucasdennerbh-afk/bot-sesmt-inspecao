@@ -164,21 +164,46 @@ def calcular_validade(data_str, anos=5):
     except: return "", False
 
 def gerar_mascara_txt(dados_colab, lista_nao_conforme):
-    txt = f"""PEDIDO DE EPI - NÃO CONFORME
+    txt = f"""========================================
+    PEDIDO DE EPI - NÃO CONFORME - SESMT
+
+DATA/HORA: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
 CHAPA: {dados_colab['chapa']}
 NOME: {dados_colab['nome']}
-TEL: {dados_colab['telefone']}
+CARGO: {dados_colab.get('cargo','')}
+ADMISSÃO: {dados_colab.get('data_admissao','')}
+TELEFONE: {dados_colab['telefone']}
+EH MOTORISTA: {dados_colab.get('eh_motorista','')}
 SUPERVISOR: {dados_colab['supervisor']}
 COORDENADOR: {dados_colab.get('coordenador','')}
-DATA: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}
+
+TOTAL NÃO CONFORME: {len(lista_nao_conforme)}
 
 ITENS NÃO CONFORME:
 """
-    if not lista_nao_conforme: txt += "NENHUM\n"
+    if not lista_nao_conforme:
+        txt += "NENHUM - TODOS CONFORME\n"
     else:
-        for r in lista_nao_conforme:
-            txt += f"- {r['item']} | {r.get('tamanho','')} | {r.get('data_fab','')}\n"
-    nome_arq = f"MASCARA_{dados_colab['chapa']}_{uuid.uuid4().hex[:4]}.txt"
+        for i, r in enumerate(lista_nao_conforme, 1):
+            txt += f"{i}. {r['item']}\n"
+            if r.get('tamanho'): txt += f"   TAMANHO/QTD: {r.get('tamanho')}\n"
+            if r.get('data_fab'): txt += f"   FAB: {r.get('data_fab')} | VALIDADE: {r.get('validade')}\n"
+            txt += f"   STATUS: {r.get('status')}\n   ---\n"
+    txt += f"""
+
+OBSERVAÇÃO:
+Colaborador ciente que deve procurar o almoxarifado
+para troca dos EPIs Não Conforme em até 48h.
+
+Ass. Colaborador: ________________________
+
+Ass. SESMT: ________________________
+
+Gerado automaticamente pelo BOT SESMT
+E-mail enviado para supervisor: {dados_colab['supervisor']}
+TELEMONT - SESMT
+"""
+    nome_arq = f"MASCARA_{dados_colab['chapa']}_{datetime.datetime.now().strftime('%d%m%Y_%H%M')}_{uuid.uuid4().hex[:4]}.txt"
     caminho = os.path.join(PASTA_MASC, nome_arq)
     with open(caminho, "w", encoding="utf-8") as f: f.write(txt)
     return caminho, txt
@@ -211,7 +236,6 @@ def gerar_excel_completo(caminho="/tmp/sesmt_completo.xlsx", filtro_supervisor="
         resumo_coord.to_excel(writer, sheet_name='POR_GERENTE', index=False)
     return caminho
 
-# === ALTERADO: SÓ SUPERVISOR ===
 def enviar_email_nao_conforme(supervisor_nome, coordenador_nome, chapa, nome_colab, lista_nao_conforme, caminho_txt, dados_colab):
     try:
         import smtplib
@@ -219,22 +243,13 @@ def enviar_email_nao_conforme(supervisor_nome, coordenador_nome, chapa, nome_col
         from email.mime.text import MIMEText
         from email.mime.base import MIMEBase
         from email import encoders
-        
-        # SÓ SUPERVISOR - NÃO ENVIA MAIS PARA COORDENADOR
         email_sup = EMAILS_SUP.get(supervisor_nome.upper()) if supervisor_nome else None
         emails_destino = [email_sup] if email_sup else []
-        
-        print(f"TENTANDO ENVIAR SÓ PARA SUPERVISOR: {emails_destino}")
-        
-        if not emails_destino: 
-            print(f"Supervisor {supervisor_nome} sem email cadastrado")
-            return False, []
-            
+        if not emails_destino: return False, []
         EMAIL_USER = os.environ.get("EMAIL_USER", "").strip() or "botsesmt@gmail.com"
         EMAIL_PASS = os.environ.get("EMAIL_PASS", "").strip().replace(" ","") or "tcepcskwinxlfnsk"
         SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com").strip()
         SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
-        
         assunto = f"INSPEÇÃO NÃO CONFORME - CHAPA {chapa} - {nome_colab}"
         corpo = f"""Segue os itens não conforme de chapa {chapa} - {nome_colab}
 
@@ -250,14 +265,12 @@ ITENS NÃO CONFORME ({len(lista_nao_conforme)}):
 """
         for r in lista_nao_conforme:
             corpo += f"- {r['item']} | TAM: {r.get('tamanho','')} | FAB: {r.get('data_fab','')}\n"
-        corpo += "\nMÁSCARA EM ANEXO.\n\nSESMT - Telemont\n"
-        
+        corpo += "\nMÁSCARA COMPLETA EM ANEXO.\n\nSESMT - Telemont\n"
         msg = MIMEMultipart()
         msg['From'] = EMAIL_USER
         msg['To'] = ", ".join(emails_destino)
         msg['Subject'] = assunto
         msg.attach(MIMEText(corpo, 'plain', 'utf-8'))
-        
         if caminho_txt and os.path.exists(caminho_txt):
             with open(caminho_txt, "rb") as f:
                 part = MIMEBase('application', 'octet-stream')
@@ -265,16 +278,14 @@ ITENS NÃO CONFORME ({len(lista_nao_conforme)}):
             encoders.encode_base64(part)
             part.add_header('Content-Disposition', f"attachment; filename={os.path.basename(caminho_txt)}")
             msg.attach(part)
-        
         server = smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20)
         server.starttls()
         server.login(EMAIL_USER, EMAIL_PASS)
         server.sendmail(EMAIL_USER, emails_destino, msg.as_string())
         server.quit()
-        print(f"EMAIL ENVIADO COM SUCESSO PARA SUPERVISOR {emails_destino}")
         return True, emails_destino
     except Exception as e:
-        print(f"Erro email DETALHADO: {e}")
+        print(f"Erro email: {e}")
         return False, []
 
 app_flask = Flask(__name__)
@@ -287,7 +298,7 @@ def excel_route():
     filtro_sup = request.args.get('supervisor','').strip().upper()
     filtro_ger = request.args.get('gerente','').strip().upper()
     caminho = gerar_excel_completo(filtro_supervisor=filtro_sup, filtro_gerente=filtro_ger)
-    if not caminho or not os.path.exists(caminho): return "Sem dados para este filtro"
+    if not caminho or not os.path.exists(caminho): return "Sem dados"
     nome = f"SESMT_{filtro_sup or 'TODOS'}_{filtro_ger or 'TODOS'}_{datetime.datetime.now().strftime('%d%m%Y_%H%M')}.xlsx"
     return send_file(caminho, as_attachment=True, download_name=nome)
 @app_flask.route('/graficos')
@@ -530,26 +541,42 @@ async def status_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await proximo_item(update, context)
 
 async def finalizar(update, context):
+    # === MENSAGEM DE AGUARDANDO ===
+    await update.message.reply_text("⏳ AGUARDANDO... Criando máscara de Não Conforme e enviando e-mail para o supervisor...\nIsso pode levar alguns segundos...")
+    try:
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    except: pass
+
     chapa=context.user_data['chapa']; func=context.user_data['func']; tel=context.user_data['telefone']; eh_mot=context.user_data['eh_motorista']
     resultados=context.user_data['resultados']; nao_conf=context.user_data['nao_conforme_lista']
     data_hora=datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+
     with open(ARQ_INS, "a", newline="", encoding="utf-8") as f:
         w=csv.writer(f)
         for r in resultados: w.writerow([data_hora, chapa, func['nome'], func['cargo'], func['supervisor'], func['coordenador'], tel, eh_mot, r['item'], r['tamanho'], r['data_fab'], r['validade'], r['status']])
+
     dados_colab={"chapa":chapa,"nome":func['nome'],"cargo":func['cargo'],"data_admissao":func['admissao'],"supervisor":func['supervisor'],"coordenador":func['coordenador'],"telefone":tel,"eh_motorista":eh_mot}
+
     caminho_txt, txt_conteudo = gerar_mascara_txt(dados_colab, nao_conf)
+
     with open(ARQ_PEDIDOS, "a", newline="", encoding="utf-8") as f: csv.writer(f).writerow([data_hora, chapa, func['nome'], tel, func['supervisor'], txt_conteudo.replace("\n"," | ")])
+
     enviado=False; dest=[]
     if nao_conf:
+        try:
+            await update.message.reply_text(f"📧 Enviando e-mail para supervisor {func['supervisor']} ({EMAILS_SUP.get(func['supervisor'].upper(),'')})...")
+        except: pass
         enviado, dest = enviar_email_nao_conforme(func['supervisor'], func['coordenador'], chapa, func['nome'], nao_conf, caminho_txt, dados_colab)
-    msg=f"✅ FINALIZADA!\n\nCHAPA: {chapa}\nNÃO CONF: {len(nao_conf)}\n\n📋 MÁSCARA:\n{txt_conteudo}"
+
+    msg=f"✅ INSPEÇÃO FINALIZADA!\n\nCHAPA: {chapa}\nNOME: {func['nome']}\nNÃO CONFORME: {len(nao_conf)}\n\n📋 MÁSCARA GERADA:\n{txt_conteudo}"
     if enviado: msg+=f"\n\n📧 E-mail enviado para SUPERVISOR: {', '.join(dest)}"
-    elif nao_conf: msg+=f"\n\n⚠️ Email não enviado - verifique Render."
+    elif nao_conf: msg+=f"\n\n⚠️ E-mail não enviado - verifique variáveis no Render"
+
     await update.message.reply_text(msg)
     if os.path.exists(caminho_txt):
-        await context.bot.send_document(chat_id=update.effective_chat.id, document=open(caminho_txt, "rb"), filename=os.path.basename(caminho_txt), caption="📄 MÁSCARA TXT")
+        await context.bot.send_document(chat_id=update.effective_chat.id, document=open(caminho_txt, "rb"), filename=os.path.basename(caminho_txt), caption="📄 MÁSCARA TXT COMPLETA - Não Conforme")
     kb = ReplyKeyboardMarkup([[KeyboardButton("🔄 NOVA INSPEÇÃO - /start")]], resize_keyboard=True)
-    await update.message.reply_text("👇 Para nova inspeção:", reply_markup=kb)
+    await update.message.reply_text("👇 Para nova inspeção clique em /start:", reply_markup=kb)
     return ConversationHandler.END
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
