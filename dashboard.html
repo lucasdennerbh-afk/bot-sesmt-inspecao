@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DASHBOARD - NC Moderno</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+<style>
+body{font-family:Inter,sans-serif;background:#0f172a}
+.glass{backdrop-filter:blur(12px);background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.1)}
+.card{border-radius:20px;box-shadow:0 20px 40px rgba(0,0,0,0.3)}
+.gradient-1{background:linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%)}
+.gradient-2{background:linear-gradient(135deg,#06b6d4 0%,#3b82f6 100%)}
+.gradient-3{background:linear-gradient(135deg,#f59e0b 0%,#ef4444 100%)}
+.gradient-4{background:linear-gradient(135deg,#10b981 0%,#059669 100%)}
+</style>
+</head>
+<body class="text-white p-4">
+<div class="max-w-[1600px] mx-auto">
+<div class="flex justify-between items-center mb-6">
+<div>
+<h1 class="text-4xl font-extrabold">DASHBOARD <span class="text-transparent bg-clip-text bg-gradient-to-r from-violet-400 to-cyan-400">SUPABASE</span></h1>
+<p class="text-slate-400">Total NC: <span id="totalNC" class="text-white font-bold text-xl">0</span></p>
+</div>
+<button onclick="carregarDados()" class="bg-white text-slate-900 px-5 py-2.5 rounded-full font-bold">Atualizar</button>
+</div>
+
+<div class="glass card p-5 mb-6 grid grid-cols-1 md:grid-cols-4 gap-4">
+<input id="fChapa" oninput="aplicarFiltros()" placeholder="Chapa ou Nome - ex: 100012" class="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5">
+<select id="fSup" onchange="aplicarFiltros()" class="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5"><option value="">Todos Supervisores</option></select>
+<select id="fCoord" onchange="aplicarFiltros()" class="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5"><option value="">Todos Coordenadores</option></select>
+<select id="fItem" onchange="aplicarFiltros()" class="bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5"><option value="">Todos Itens</option></select>
+</div>
+
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+<div class="gradient-1 card p-5"><div class="text-xs uppercase opacity-70">Total NC</div><div id="kpiTotal" class="text-4xl font-extrabold mt-2">0</div><div id="kpiItens" class="text-xs mt-1">0 itens</div></div>
+<div class="gradient-2 card p-5"><div class="text-xs uppercase opacity-70">Item Crítico</div><div id="kpiTopItem" class="text-lg font-bold mt-2">-</div><div id="kpiTopPct" class="text-xs mt-1">0%</div></div>
+<div class="gradient-3 card p-5"><div class="text-xs uppercase opacity-70">Supervisor +NC</div><div id="kpiTopSup" class="text-lg font-bold mt-2">-</div><div id="kpiTopSupQtd" class="text-xs mt-1">0</div></div>
+<div class="gradient-4 card p-5"><div class="text-xs uppercase opacity-70">Tamanho +Falta</div><div id="kpiTopTam" class="text-2xl font-extrabold mt-2">-</div><div id="kpiTopTamQtd" class="text-xs mt-1">0</div></div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+<div class="lg:col-span-1 glass card p-6">
+<h3 class="font-bold mb-2">% por Item (Colorido)</h3>
+<div class="relative"><canvas id="chartDonut" height="320"></canvas><div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-center"><div id="donutTotal" class="text-3xl font-extrabold">0</div><div class="text-[10px] text-slate-400">TOTAL NC</div></div></div>
+<div id="legendaDonut" class="mt-4 space-y-2"></div>
+</div>
+<div class="lg:col-span-2 glass card p-6">
+<h3 class="font-bold mb-2">Item | Tamanho | Qtd | Total Item | %</h3>
+<div class="overflow-auto rounded-xl border border-slate-700 max-h-[600px]">
+<table class="w-full text-sm"><thead class="sticky top-0 bg-slate-900 text-slate-400 text-xs uppercase"><tr><th class="text-left p-3">Item</th><th class="p-3">Tamanho</th><th class="text-center p-3">Qtd</th><th class="text-center p-3">Total Item</th><th class="text-center p-3">%</th></tr></thead><tbody id="tbodyItens"></tbody><tfoot class="bg-slate-900 font-bold"><tr><td colspan="2" class="p-3 text-right">TOTAL</td><td id="footQtd" class="p-3 text-center">0</td><td id="footTotal" class="p-3 text-center">0</td><td class="p-3 text-center">100%</td></tr></tfoot></table>
+</div>
+</div>
+</div>
+
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+<div class="glass card p-6"><h3 class="font-bold mb-4">NC por Supervisor - SOMA</h3><canvas id="chartSup" height="260"></canvas><table class="w-full text-sm mt-4"><thead class="bg-slate-900 text-slate-400 text-xs"><tr><th class="text-left p-3">Supervisor</th><th class="text-center p-3">QTD</th><th class="text-center p-3">%</th></tr></thead><tbody id="tbodySup"></tbody></table></div>
+<div class="glass card p-6"><h3 class="font-bold mb-4">Ranking Itens</h3><canvas id="chartBar" height="260"></canvas><table class="w-full text-sm mt-4"><thead class="bg-slate-900 text-slate-400 text-xs"><tr><th class="text-left p-3">Coordenador</th><th class="text-center p-3">QTD</th></tr></thead><tbody id="tbodyCoord"></tbody></table></div>
+</div>
+</div>
+
+<script>
+const SUPABASE_URL = "https://cimfbcbvvtdgplyxrvc.supabase.co";
+const SUPABASE_KEY = "sb_publishable_OXlAn0nGxXLV6pwoGsKPXQ_pWfE5QkT";
+let supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+let rawData=[], filteredData=[], charts={};
+function parseItem(raw){
+  if(!raw) return {item:"NAO INFORMADO", tamanho:""};
+  let txt=raw.toUpperCase().trim(); let tamanho=""; let item=txt;
+  let m=txt.match(/^(.*?)\s*[-]\s*(P|M|G|GG|XG|EG|PP|UNICO|UTILITARIO|\d{2,3})$/i);
+  if(m){item=m[1].trim(); tamanho=m[2].toUpperCase();}
+  else{let m2=txt.match(/^(.*?)\s+(P|M|G|GG|XG|EG|PP|UNICO|\d{2,3})$/i); if(m2){item=m2[1].trim(); tamanho=m2[2].toUpperCase();}}
+  return {item, tamanho: tamanho.replace("UTILITARIO","Utilitário")};
+}
+async function carregarDados(){
+  try{
+    let {data, error}=await supabaseClient.from("inspecoes").select("*").order("data_inspecao",{ascending:false}).limit(5000);
+    if(error) throw error;
+    rawData=data.map(r=>{let p=parseItem(r.epi_faltante||r.item||""); return {...r, item:p.item, tamanho:p.tamanho, supervisor:r.supervisor||"DESCONHECIDO", coordenador:r.coordenador||"DESCONHECIDO"};});
+  }catch(e){console.log(e); rawData=[{chapa:"100012", nome:"GLAUDSON", supervisor:"ADRIANO ALVES DE SOUZA", coordenador:"DIOGO COSTA MANSO", epi_faltante:"CALÇADO DE SEGURANÇA - 42", item:"CALÇADO DE SEGURANÇA", tamanho:"42"}];}
+  preencherFiltros(); aplicarFiltros();
+}
+function preencherFiltros(){
+  let sups=[...new Set(rawData.map(d=>d.supervisor))].sort();
+  let coords=[...new Set(rawData.map(d=>d.coordenador))].sort();
+  let itens=[...new Set(rawData.map(d=>d.item))].sort();
+  document.getElementById("fSup").innerHTML='<option value="">Todos Supervisores</option>'+sups.map(s=>`<option>${s}</option>`).join('');
+  document.getElementById("fCoord").innerHTML='<option value="">Todos Coordenadores</option>'+coords.map(s=>`<option>${s}</option>`).join('');
+  document.getElementById("fItem").innerHTML='<option value="">Todos Itens</option>'+itens.map(s=>`<option>${s}</option>`).join('');
+}
+function aplicarFiltros(){
+  let chapa=document.getElementById("fChapa").value.toLowerCase();
+  let sup=document.getElementById("fSup").value;
+  let coord=document.getElementById("fCoord").value;
+  let item=document.getElementById("fItem").value;
+  filteredData=rawData.filter(d=>{
+    let ok=true;
+    if(chapa) ok=ok&&((d.chapa||"").toLowerCase().includes(chapa)||(d.nome||"").toLowerCase().includes(chapa));
+    if(sup) ok=ok&&d.supervisor===sup;
+    if(coord) ok=ok&&d.coordenador===coord;
+    if(item) ok=ok&&d.item===item;
+    return ok;
+  });
+  renderAll();
+}
+function renderAll(){
+  let total=filteredData.length;
+  document.getElementById("totalNC").innerText=total;
+  document.getElementById("kpiTotal").innerText=total;
+  document.getElementById("donutTotal").innerText=total;
+  let mapItemTam={}, mapItemTotal={};
+  filteredData.forEach(d=>{let key=d.item+"|"+(d.tamanho||""); mapItemTam[key]=(mapItemTam[key]||0)+1; mapItemTotal[d.item]=(mapItemTotal[d.item]||0)+1;});
+  let tbody=document.getElementById("tbodyItens");
+  let rows=Object.entries(mapItemTam).map(([k,qtd])=>{let [item,tam]=k.split("|"); return {item, tamanho:tam||"-", qtd, totalItem:mapItemTotal[item], pct: total>0?((qtd/total)*100).toFixed(1):0};}).sort((a,b)=>b.qtd-a.qtd);
+  tbody.innerHTML=rows.map(r=>`<tr class="hover:bg-white/5"><td class="p-3 font-semibold">${r.item}</td><td class="p-3"><span class="bg-slate-800 border border-slate-700 px-2.5 py-1 rounded-full text-xs">${r.tamanho}</span></td><td class="p-3 text-center font-bold text-cyan-300">${r.qtd}</td><td class="p-3 text-center"><span class="bg-violet-500/20 text-violet-300 px-2.5 py-1 rounded-full text-xs font-bold">${r.totalItem}</span></td><td class="p-3 text-center text-slate-400">${r.pct}%</td></tr>`).join('');
+  document.getElementById("footQtd").innerText=total; document.getElementById("footTotal").innerText=total;
+  document.getElementById("kpiItens").innerText=Object.keys(mapItemTotal).length+" itens";
+  let topItem=Object.entries(mapItemTotal).sort((a,b)=>b[1]-a[1])[0];
+  if(topItem){document.getElementById("kpiTopItem").innerText=topItem[0]; document.getElementById("kpiTopPct").innerText=((topItem[1]/total)*100).toFixed(1)+"% • "+topItem[1]+"x";}
+  let mapSup={}; filteredData.forEach(d=>{mapSup[d.supervisor]=(mapSup[d.supervisor]||0)+1;});
+  let supSorted=Object.entries(mapSup).sort((a,b)=>b[1]-a[1]);
+  if(supSorted[0]){document.getElementById("kpiTopSup").innerText=supSorted[0][0]; document.getElementById("kpiTopSupQtd").innerText=supSorted[0][1]+" ocorrências";}
+  document.getElementById("tbodySup").innerHTML=supSorted.map(([s,q])=>`<tr><td class="p-3">${s}</td><td class="p-3 text-center font-bold text-amber-300">${q}</td><td class="p-3 text-center">${((q/total)*100).toFixed(1)}%</td></tr>`).join('');
+  let mapTam={}; filteredData.forEach(d=>{if(d.tamanho&&d.tamanho!=="-") mapTam[d.tamanho]=(mapTam[d.tamanho]||0)+1;});
+  let tamSorted=Object.entries(mapTam).sort((a,b)=>b[1]-a[1]);
+  if(tamSorted[0]){document.getElementById("kpiTopTam").innerText=tamSorted[0][0]; document.getElementById("kpiTopTamQtd").innerText=tamSorted[0][1]+" pedidos";}
+  let mapCoord={}; filteredData.forEach(d=>{mapCoord[d.coordenador]=(mapCoord[d.coordenador]||0)+1;});
+  document.getElementById("tbodyCoord").innerHTML=Object.entries(mapCoord).sort((a,b)=>b[1]-a[1]).map(([c,q])=>`<tr><td class="p-3">${c}</td><td class="p-3 text-center font-bold">${q}</td></tr>`).join('');
+  renderCharts(mapItemTotal, mapSup, total);
+}
+function renderCharts(mapItemTotal, mapSup, total){
+  let colors=["#6366f1","#06b6d4","#f59e0b","#10b981","#ef4444","#8b5cf6","#ec4899","#14b8a6"];
+  let labels=Object.keys(mapItemTotal); let values=Object.values(mapItemTotal);
+  if(charts.donut) charts.donut.destroy();
+  charts.donut=new Chart(document.getElementById("chartDonut"),{type:'doughnut',data:{labels, datasets:[{data:values, backgroundColor:labels.map((_,i)=>colors[i%colors.length]), borderWidth:0}]},options:{cutout:'72%', plugins:{legend:{display:false}}}}});
+  document.getElementById("legendaDonut").innerHTML=labels.map((l,i)=>{let pct=((values[i]/total)*100).toFixed(1); return `<div class="flex justify-between glass rounded-xl px-3 py-2"><div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full" style="background:${colors[i%colors.length]}"></span><span class="text-xs">${l}</span></div><div class="text-xs font-bold">${values[i]} • ${pct}%</div></div>`;}).join('');
+  if(charts.bar) charts.bar.destroy();
+  charts.bar=new Chart(document.getElementById("chartBar"),{type:'bar',data:{labels, datasets:[{data:values, backgroundColor:"#6366f1", borderRadius:8}]},options:{indexAxis:'y', plugins:{legend:{display:false}}}}});
+  if(charts.sup) charts.sup.destroy();
+  let supLabels=Object.keys(mapSup); let supValues=Object.values(mapSup);
+  charts.sup=new Chart(document.getElementById("chartSup"),{type:'bar',data:{labels:supLabels, datasets:[{data:supValues, backgroundColor:"#f59e0b", borderRadius:8}]},options:{plugins:{legend:{display:false}}}}});
+}
+carregarDados();
+</script>
+</body>
+</html>
