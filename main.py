@@ -1,4 +1,4 @@
-import os, threading, csv, datetime, re, uuid, json, unicodedata
+import os, threading, csv, datetime, re, uuid, json, unicodedata, asyncio
 from collections import Counter, defaultdict
 from flask import Flask, send_from_directory, request, send_file, redirect
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
@@ -267,7 +267,7 @@ def base():
     todos_coord = sorted(COORDENADORES_LISTA)
     opt_sup = "".join([f"<option value='{s}' {'selected' if s==filtro_sup else ''}>{s}</option>" for s in todos_sup])
     opt_coord = "".join([f"<option value='{c}' {'selected' if c==filtro_coord else ''}>{c}</option>" for c in todos_coord])
-    html = f"<html><head><meta charset='utf-8'><title>BASE</title><style>body{{font-family:Arial;padding:15px;background:#f0f2f5}} .card{{background:white;padding:15px;border-radius:10px;margin-bottom:20px}} table{{width:100%;border-collapse:collapse;background:white;font-size:12px}} th,td{{border:1px solid #ddd;padding:7px}} th{{background:#0F4C8F;color:white}} .btn{{padding:8px 14px;border-radius:5px;color:white;text-decoration:none;display:inline-block;font-size:12px;margin:2px}} .badge{{padding:3px 8px;border-radius:10px;color:white;font-weight:bold}}</style></head><body><h2>BASE</h2><div class='card'><form method='get'>SUP: <select name='supervisor'><option>-- TODOS --</option>{opt_sup}</select> COORD: <select name='coordenador'><option>-- TODOS --</option>{opt_coord}</select><button class='btn' style='background:#0F4C8F'>FILTRAR</button></form></div><div class='card'><table><tr><th>SUP</th><th>TOTAL</th><th>FEITOS</th><th>JUST</th><th>PEND</th><th>%</th></tr>"
+    html = f"<html><head><meta charset='utf-8'><title>BASE</title><style>body{{font-family:Arial;padding:15px;background:#f0f2f5}} .card{{background:white;padding:15px;border-radius:10px;margin-bottom:20px}} table{{width:100%;border-collapse:collapse;background:white;font-size:12px}} th,td{{border:1px solid #ddd;padding:7px}} th{{background:#0F4C8F;color:white}}</style></head><body><h2>BASE</h2><div class='card'><form method='get'>SUP: <select name='supervisor'><option>-- TODOS --</option>{opt_sup}</select> COORD: <select name='coordenador'><option>-- TODOS --</option>{opt_coord}</select><button>Filtrar</button></form></div><div class='card'><table><tr><th>SUP</th><th>TOTAL</th><th>FEITOS</th><th>JUST</th><th>PEND</th><th>%</th></tr>"
     for sup, lista in sorted(por_supervisor.items()):
         total=len(lista); feitos_sup=sum(1 for c in lista if c['chapa'] in feitos); just_sup=sum(1 for c in lista if c['chapa'] in justificados); pend=total-feitos_sup-just_sup; perc=int((feitos_sup+just_sup)/total*100) if total else 0; cor="green" if perc>=100 else "orange" if perc>=50 else "red"
         html+=f"<tr><td>{sup}</td><td>{total}</td><td>{feitos_sup}</td><td>{just_sup}</td><td>{pend}</td><td style='background:{cor};color:white'>{perc}%</td></tr>"
@@ -390,8 +390,7 @@ async def telefone_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             tel_raw = update.message.text or ""
         tel = re.sub(r'\D','',str(tel_raw))
-        if len(tel) > 11:
-            tel = tel[-11:]
+        if len(tel) > 11: tel = tel[-11:]
         if len(tel) < 10:
             await update.message.reply_text(f"❌ Telefone inválido. Digite com DDD, ex: 31999999999")
             return TELEFONE
@@ -412,10 +411,8 @@ async def motorista_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
         func=context.user_data['func']
         d={"chapa":context.user_data['chapa'],"nome":func['nome'],"cargo":func['cargo'],"data_admissao":func['admissao'],"supervisor":func['supervisor'],"coordenador":func['coordenador'],"telefone":context.user_data['telefone'],"id_telegram":str(update.effective_user.id),"eh_motorista":eh_mot}
         salvar_cadastro(d)
-        if eh_mot=="SIM": 
-            context.user_data['itens_filtrados']=ITENS
-        else: 
-            context.user_data['itens_filtrados']=[i for i in ITENS if i['regra']=="TODOS"]
+        if eh_mot=="SIM": context.user_data['itens_filtrados']=ITENS
+        else: context.user_data['itens_filtrados']=[i for i in ITENS if i['regra']=="TODOS"]
         context.user_data['item_idx']=0
         await update.message.reply_text(f"✅ {len(context.user_data['itens_filtrados'])} itens - Iniciando...")
         return await proximo_item(update, context)
@@ -523,53 +520,62 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = ReplyKeyboardMarkup([[KeyboardButton("/start - Nova Inspeção")]], resize_keyboard=True)
     await update.message.reply_text("Cancelado! /start", reply_markup=kb); return ConversationHandler.END
 
-# ===== WEBHOOK - FIM DO CONFLICT =====
+# ===== WEBHOOK - CORREÇÃO DEFINITIVA LOOP =====
 application = None
+BOT_LOOP = None
 
 @app_flask.route('/webhook', methods=['POST'])
 def webhook():
-    global application
-    if not application:
+    global application, BOT_LOOP
+    if not application or not BOT_LOOP:
         return "bot not ready", 503
     try:
         data = request.get_json(force=True)
         update = Update.de_json(data, application.bot)
-        import asyncio
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(application.process_update(update))
+        future = asyncio.run_coroutine_threadsafe(application.process_update(update), BOT_LOOP)
+        future.result(timeout=20)
     except Exception as e:
         print(f"Erro webhook: {e}")
     return "ok"
 
-def run_flask():
-    global application
-    import asyncio
-    loop = asyncio.new_event_loop()
+def start_bot_loop(loop):
     asyncio.set_event_loop(loop)
-    application = Application.builder().token(TOKEN).build()
-    conv = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            CHAPA: [MessageHandler(filters.TEXT & ~filters.COMMAND, chapa_step)], 
-            TELEFONE: [MessageHandler(filters.CONTACT | filters.TEXT & ~filters.COMMAND, telefone_step)],
-            EH_MOTORISTA: [MessageHandler(filters.TEXT & ~filters.COMMAND, motorista_step)], 
-            TAMANHO: [MessageHandler(filters.TEXT & ~filters.COMMAND, tamanho_step)], 
-            DATA_FAB: [MessageHandler(filters.TEXT & ~filters.COMMAND, data_fab_step)], 
-            STATUS: [MessageHandler(filters.TEXT & ~filters.COMMAND, status_step)], 
-            CONE_TIPO: [MessageHandler(filters.TEXT & ~filters.COMMAND, cone_tipo_step)], 
-            CONE_QTD: [MessageHandler(filters.TEXT & ~filters.COMMAND, cone_qtd_step)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)]
-    )
-    application.add_handler(conv)
-    application.add_handler(CommandHandler("start", start))
-    async def setup():
+    loop.run_forever()
+
+def run_flask():
+    global application, BOT_LOOP
+    
+    BOT_LOOP = asyncio.new_event_loop()
+    t = threading.Thread(target=start_bot_loop, args=(BOT_LOOP,), daemon=True)
+    t.start()
+
+    async def init_bot():
+        global application
+        application = Application.builder().token(TOKEN).build()
+        conv = ConversationHandler(
+            entry_points=[CommandHandler("start", start)],
+            states={
+                CHAPA: [MessageHandler(filters.TEXT & ~filters.COMMAND, chapa_step)], 
+                TELEFONE: [MessageHandler(filters.CONTACT | filters.TEXT & ~filters.COMMAND, telefone_step)],
+                EH_MOTORISTA: [MessageHandler(filters.TEXT & ~filters.COMMAND, motorista_step)], 
+                TAMANHO: [MessageHandler(filters.TEXT & ~filters.COMMAND, tamanho_step)], 
+                DATA_FAB: [MessageHandler(filters.TEXT & ~filters.COMMAND, data_fab_step)], 
+                STATUS: [MessageHandler(filters.TEXT & ~filters.COMMAND, status_step)], 
+                CONE_TIPO: [MessageHandler(filters.TEXT & ~filters.COMMAND, cone_tipo_step)], 
+                CONE_QTD: [MessageHandler(filters.TEXT & ~filters.COMMAND, cone_qtd_step)],
+            },
+            fallbacks=[CommandHandler("cancel", cancel), CommandHandler("start", start)]
+        )
+        application.add_handler(conv)
+        application.add_handler(CommandHandler("start", start))
         await application.initialize()
         await application.start()
         await application.bot.set_webhook(f"{WEBHOOK_URL}/webhook", drop_pending_updates=True)
-        print(f"✅ WEBHOOK SETADO: {WEBHOOK_URL}/webhook - FIM DO CONFLICT + FIX TELEFONE")
-    loop.run_until_complete(setup())
+        print(f"✅ WEBHOOK SETADO: {WEBHOOK_URL}/webhook - LOOP FIX OK")
+
+    fut = asyncio.run_coroutine_threadsafe(init_bot(), BOT_LOOP)
+    fut.result(timeout=30)
+    
     app_flask.run(host='0.0.0.0', port=int(os.environ.get("PORT",10000)))
 
 def main():
