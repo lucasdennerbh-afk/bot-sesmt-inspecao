@@ -296,7 +296,6 @@ def admin_liberar():
         except: pass
     return f"<script>alert('Liberada {chapa}');window.location='/admin?senha={ADMIN_SENHA}';</script>"
 
-# ===== DASHBOARD NOVO IGUAL DA FOTO =====
 @app_flask.route('/graficos')
 def graficos():
     filtro_busca = request.args.get('busca','').strip().upper()
@@ -348,15 +347,7 @@ def graficos():
         barras += f"<div style='margin-bottom:10px'><div style='display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px'><span style='color:#cbd5e1'>{item[:30]}</span><span style='color:white'><b>{perc}%</b> ({qtd})</span></div><div style='background:#1e293b;height:8px;border-radius:10px'><div style='width:{perc}%;background:{cor};height:8px;border-radius:10px'></div></div></div>"
     if not barras:
         barras = f"<div style='display:flex;flex-direction:column;align-items:center;justify-content:center;height:220px'><div style='font-size:42px;font-weight:bold;color:white'>0</div><div style='font-size:10px;color:#94a3b8'>TOTAL NC</div></div>"
-    html = f"""
-    <html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>DASHBOARD SUPABASE</title>
-    <style>*{{box-sizing:border-box}} body{{margin:0;font-family:Arial;background:#0f172a;color:white;padding:20px}} .top{{display:flex;justify-content:space-between;align-items:center}} .top h1{{margin:0;font-size:30px}} .top h1 span{{color:#a78bfa}} .btn{{background:white;color:#0f172a;border:none;padding:9px 20px;border-radius:20px;font-weight:bold;cursor:pointer;text-decoration:none}} .filtros{{background:#1e293b;padding:15px;border-radius:16px;display:flex;gap:12px;margin:15px 0;flex-wrap:wrap;border:1px solid #334155}} .filtros input, .filtros select{{background:#0f172a;border:1px solid #334155;color:#cbd5e1;padding:11px 14px;border-radius:12px;min-width:220px;flex:1}} .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:15px;margin-bottom:20px}} .card{{padding:18px;border-radius:16px;color:white}} .card p{{margin:0;font-size:10px;opacity:0.8}} .card h2{{margin:8px 0 4px 0;font-size:26px}} .c1{{background:linear-gradient(135deg,#8b5cf6,#6366f1)}} .c2{{background:linear-gradient(135deg,#06b6d4,#3b82f6)}} .c3{{background:linear-gradient(135deg,#f59e0b,#ef4444)}} .c4{{background:linear-gradient(135deg,#10b981,#059669)}} .grid{{display:grid;grid-template-columns:1.2fr 2fr;gap:15px;margin-bottom:15px}} @media(max-width:900px){{.grid{{grid-template-columns:1fr}}}} .box{{background:#1e293b;border-radius:16px;padding:18px;border:1px solid #334155}} .box h3{{margin:0 0 15px 0;font-size:14px}} table{{width:100%;border-collapse:collapse;font-size:12px}} th{{color:#94a3b8;font-size:10px;text-align:left;padding:10px 8px;border-bottom:1px solid #334155}} td{{padding:10px 8px;border-bottom:1px solid #1e293b;color:#cbd5e1}} .grid2{{display:grid;grid-template-columns:1fr 1fr;gap:15px}} @media(max-width:900px){{.grid2{{grid-template-columns:1fr}}}}</style></head><body>
-    <div class='top'><div><h1>DASHBOARD <span>SUPABASE</span></h1><div style='color:#94a3b8;font-size:13px'>Total NC: <b style='color:white'>{total_nc}</b></div></div><a class='btn' href='/graficos'>Atualizar</a></div>
-    <form method='get' class='filtros'><input name='busca' value='{filtro_busca}' placeholder='Chapa ou Nome'><select name='supervisor'><option value=''>Todos Supervisores</option>{options_sup}</select><select name='coordenador'><option value=''>Todos Coordenadores</option>{options_coord}</select><select name='item'><option value=''>Todos Itens</option>{options_item}</select><button class='btn' style='background:#8b5cf6;color:white'>Filtrar</button><a href='/graficos' style='color:#94a3b8;padding:10px;text-decoration:none'>Limpar</a></form>
-    <div class='cards'><div class='card c1'><p>TOTAL NC</p><h2>{total_nc}</h2><small>{len(cont_item)} itens</small></div><div class='card c2'><p>ITEM CRÍTICO</p><h2 style='font-size:15px'>{item_critico[:26]}</h2><small>{perc_critico}%</small></div><div class='card c3'><p>SUPERVISOR +NC</p><h2 style='font-size:14px'>{sup_critico[:22]}</h2><small>{qtd_sup_critico}</small></div><div class='card c4'><p>TAMANHO +FALTA</p><h2 style='font-size:15px'>{tam_critico or '-'}</h2><small>{qtd_tam_critico}</small></div></div>
-    <div class='grid'><div class='box'><h3>% por Item (Colorido)</h3>{barras}</div><div class='box'><h3>Item | Tamanho | Qtd | Total Item | %</h3><div style='overflow:auto;max-height:360px'><table><tr><th>ITEM</th><th>TAMANHO</th><th>QTD</th><th>TOTAL ITEM</th><th>%</th></tr>{linhas_tabela}<tr style='background:#0f172a;font-weight:bold'><td colspan=2 style='text-align:center'>TOTAL</td><td style='text-align:center'>{total_nc}</td><td style='text-align:center'>{total_nc}</td><td style='text-align:center'>100%</td></tr></table></div></div></div>
-    <div class='grid2'><div class='box'><h3>NC por Supervisor - SOMA</h3><table><tr><th>SUPERVISOR</th><th>QTD</th></tr>{tabela_sup_soma}</table></div><div class='box'><h3>Ranking Itens</h3><table><tr><th>ITEM</th><th>QTD</th><th>%</th></tr>{tabela_ranking}</table></div></div>
-    <div style='margin-top:20px;text-align:center'><a href='/base' style='color:#a78bfa;margin-right:20px'>BASE</a><a href='/admin?senha={ADMIN_SENHA}' style='color:#94a3b8'>ADMIN</a></div></body></html>"""
+    html = f"""<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>DASHBOARD SUPABASE</title><style>*{{box-sizing:border-box}} body{{margin:0;font-family:Arial;background:#0f172a;color:white;padding:20px}} .top{{display:flex;justify-content:space-between;align-items:center}} .top h1{{margin:0;font-size:30px}} .top h1 span{{color:#a78bfa}} .btn{{background:white;color:#0f172a;border:none;padding:9px 20px;border-radius:20px;font-weight:bold;cursor:pointer;text-decoration:none}} .filtros{{background:#1e293b;padding:15px;border-radius:16px;display:flex;gap:12px;margin:15px 0;flex-wrap:wrap;border:1px solid #334155}} .filtros input, .filtros select{{background:#0f172a;border:1px solid #334155;color:#cbd5e1;padding:11px 14px;border-radius:12px;min-width:220px;flex:1}} .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:15px;margin-bottom:20px}} .card{{padding:18px;border-radius:16px;color:white}} .card p{{margin:0;font-size:10px;opacity:0.8}} .card h2{{margin:8px 0 4px 0;font-size:26px}} .c1{{background:linear-gradient(135deg,#8b5cf6,#6366f1)}} .c2{{background:linear-gradient(135deg,#06b6d4,#3b82f6)}} .c3{{background:linear-gradient(135deg,#f59e0b,#ef4444)}} .c4{{background:linear-gradient(135deg,#10b981,#059669)}} .grid{{display:grid;grid-template-columns:1.2fr 2fr;gap:15px;margin-bottom:15px}} @media(max-width:900px){{.grid{{grid-template-columns:1fr}}}} .box{{background:#1e293b;border-radius:16px;padding:18px;border:1px solid #334155}} .box h3{{margin:0 0 15px 0;font-size:14px}} table{{width:100%;border-collapse:collapse;font-size:12px}} th{{color:#94a3b8;font-size:10px;text-align:left;padding:10px 8px;border-bottom:1px solid #334155}} td{{padding:10px 8px;border-bottom:1px solid #1e293b;color:#cbd5e1}} .grid2{{display:grid;grid-template-columns:1fr 1fr;gap:15px}} @media(max-width:900px){{.grid2{{grid-template-columns:1fr}}}}</style></head><body><div class='top'><div><h1>DASHBOARD <span>SUPABASE</span></h1><div style='color:#94a3b8;font-size:13px'>Total NC: <b style='color:white'>{total_nc}</b></div></div><a class='btn' href='/graficos'>Atualizar</a></div><form method='get' class='filtros'><input name='busca' value='{filtro_busca}' placeholder='Chapa ou Nome'><select name='supervisor'><option value=''>Todos Supervisores</option>{options_sup}</select><select name='coordenador'><option value=''>Todos Coordenadores</option>{options_coord}</select><select name='item'><option value=''>Todos Itens</option>{options_item}</select><button class='btn' style='background:#8b5cf6;color:white'>Filtrar</button><a href='/graficos' style='color:#94a3b8;padding:10px;text-decoration:none'>Limpar</a></form><div class='cards'><div class='card c1'><p>TOTAL NC</p><h2>{total_nc}</h2><small>{len(cont_item)} itens</small></div><div class='card c2'><p>ITEM CRÍTICO</p><h2 style='font-size:15px'>{item_critico[:26]}</h2><small>{perc_critico}%</small></div><div class='card c3'><p>SUPERVISOR +NC</p><h2 style='font-size:14px'>{sup_critico[:22]}</h2><small>{qtd_sup_critico}</small></div><div class='card c4'><p>TAMANHO +FALTA</p><h2 style='font-size:15px'>{tam_critico or '-'}</h2><small>{qtd_tam_critico}</small></div></div><div class='grid'><div class='box'><h3>% por Item (Colorido)</h3>{barras}</div><div class='box'><h3>Item | Tamanho | Qtd | Total Item | %</h3><div style='overflow:auto;max-height:360px'><table><tr><th>ITEM</th><th>TAMANHO</th><th>QTD</th><th>TOTAL ITEM</th><th>%</th></tr>{linhas_tabela}<tr style='background:#0f172a;font-weight:bold'><td colspan=2 style='text-align:center'>TOTAL</td><td style='text-align:center'>{total_nc}</td><td style='text-align:center'>{total_nc}</td><td style='text-align:center'>100%</td></tr></table></div></div></div><div class='grid2'><div class='box'><h3>NC por Supervisor - SOMA</h3><table><tr><th>SUPERVISOR</th><th>QTD</th></tr>{tabela_sup_soma}</table></div><div class='box'><h3>Ranking Itens</h3><table><tr><th>ITEM</th><th>QTD</th><th>%</th></tr>{tabela_ranking}</table></div></div><div style='margin-top:20px;text-align:center'><a href='/base' style='color:#a78bfa;margin-right:20px'>BASE</a><a href='/admin?senha={ADMIN_SENHA}' style='color:#94a3b8'>ADMIN</a></div></body></html>"""
     return html
 
 # ===== TELEGRAM =====
@@ -380,7 +371,7 @@ async def chapa_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     just = get_justificados()
     if chapa in just:
         kb = ReplyKeyboardMarkup([[KeyboardButton("🔄 NOVA INSPEÇÃO - /start")]], resize_keyboard=True)
-        await update.message.reply_text(f"⛔ Chapa {chapa} JUSTIFICADA ({just[chapa].get('motivo')})!", reply_markup=kb); return ConversationHandler.END
+        await update.message.reply_text(f"⛔ Chapa {chapa} JUSTIFICADA!", reply_markup=kb); return ConversationHandler.END
     context.user_data['chapa']=chapa; context.user_data['func']=func
     cad=buscar_cadastro(chapa)
     if cad and cad.get('telefone'):
@@ -392,17 +383,46 @@ async def chapa_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"✅ {func['nome']}\nCompartilhe telefone:", reply_markup=ReplyKeyboardMarkup(kb, one_time_keyboard=True, resize_keyboard=True)); return TELEFONE
 
 async def telefone_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    tel_raw=update.message.contact.phone_number if update.message.contact else update.message.text; tel=re.sub(r'\D','',str(tel_raw))[-11:]; context.user_data['telefone']=tel
-    kb=[[KeyboardButton("SIM - Sou motorista"), KeyboardButton("NÃO - Não sou motorista")]]
-    await update.message.reply_text(f"Telefone {tel} salvo! Você é motorista?", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True)); return EH_MOTORISTA
+    try:
+        tel_raw = ""
+        if update.message.contact and update.message.contact.phone_number:
+            tel_raw = update.message.contact.phone_number
+        else:
+            tel_raw = update.message.text or ""
+        tel = re.sub(r'\D','',str(tel_raw))
+        if len(tel) > 11:
+            tel = tel[-11:]
+        if len(tel) < 10:
+            await update.message.reply_text(f"❌ Telefone inválido. Digite com DDD, ex: 31999999999")
+            return TELEFONE
+        context.user_data['telefone']=tel
+        kb=[[KeyboardButton("SIM - Sou motorista"), KeyboardButton("NÃO - Não sou motorista")]]
+        await update.message.reply_text(f"✅ Telefone {tel} salvo!\n\n🚗 Você é motorista?", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
+        return EH_MOTORISTA
+    except Exception as e:
+        print(f"Erro telefone_step: {e}")
+        await update.message.reply_text("Digite seu telefone com DDD, ex: 31999999999")
+        return TELEFONE
 
 async def motorista_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto=update.message.text.upper(); eh_mot = "SIM" if "SIM" in texto else "NÃO"; context.user_data['eh_motorista']=eh_mot; func=context.user_data['func']
-    d={"chapa":context.user_data['chapa'],"nome":func['nome'],"cargo":func['cargo'],"data_admissao":func['admissao'],"supervisor":func['supervisor'],"coordenador":func['coordenador'],"telefone":context.user_data['telefone'],"id_telegram":str(update.effective_user.id),"eh_motorista":eh_mot}
-    salvar_cadastro(d)
-    if eh_mot=="SIM": context.user_data['itens_filtrados']=ITENS
-    else: context.user_data['itens_filtrados']=[i for i in ITENS if i['regra']=="TODOS"]
-    context.user_data['item_idx']=0; return await proximo_item(update, context)
+    try:
+        texto = (update.message.text or "").upper()
+        eh_mot = "SIM" if "SIM" in texto else "NÃO"
+        context.user_data['eh_motorista']=eh_mot
+        func=context.user_data['func']
+        d={"chapa":context.user_data['chapa'],"nome":func['nome'],"cargo":func['cargo'],"data_admissao":func['admissao'],"supervisor":func['supervisor'],"coordenador":func['coordenador'],"telefone":context.user_data['telefone'],"id_telegram":str(update.effective_user.id),"eh_motorista":eh_mot}
+        salvar_cadastro(d)
+        if eh_mot=="SIM": 
+            context.user_data['itens_filtrados']=ITENS
+        else: 
+            context.user_data['itens_filtrados']=[i for i in ITENS if i['regra']=="TODOS"]
+        context.user_data['item_idx']=0
+        await update.message.reply_text(f"✅ {len(context.user_data['itens_filtrados'])} itens - Iniciando...")
+        return await proximo_item(update, context)
+    except Exception as e:
+        print(f"Erro motorista_step: {e}")
+        await update.message.reply_text("Clique em SIM ou NÃO novamente")
+        return EH_MOTORISTA
 
 async def proximo_item(update, context):
     idx=context.user_data.get('item_idx',0)
@@ -465,7 +485,7 @@ async def data_fab_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def status_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto_raw=update.message.text.strip().upper()
-    if "NÃO CONFORME" in texto_raw or texto_raw == "NAO CONFORME" or "NAO CONF" in texto_raw: status="Não Conforme"
+    if "NÃO CONFORME" in texto_raw or texto_raw == "NAO CONFORME": status="Não Conforme"
     elif "CONFORME" in texto_raw and "NÃO" not in texto_raw: status="Conforme"
     else: status="Conforme"
     item=context.user_data['item_atual']
@@ -503,7 +523,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = ReplyKeyboardMarkup([[KeyboardButton("/start - Nova Inspeção")]], resize_keyboard=True)
     await update.message.reply_text("Cancelado! /start", reply_markup=kb); return ConversationHandler.END
 
-# ===== WEBHOOK - CORREÇÃO DO CONFLICT =====
+# ===== WEBHOOK - FIM DO CONFLICT =====
 application = None
 
 @app_flask.route('/webhook', methods=['POST'])
@@ -527,13 +547,12 @@ def run_flask():
     import asyncio
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    
     application = Application.builder().token(TOKEN).build()
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
             CHAPA: [MessageHandler(filters.TEXT & ~filters.COMMAND, chapa_step)], 
-            TELEFONE: [MessageHandler(filters.ALL, telefone_step)], 
+            TELEFONE: [MessageHandler(filters.CONTACT | filters.TEXT & ~filters.COMMAND, telefone_step)],
             EH_MOTORISTA: [MessageHandler(filters.TEXT & ~filters.COMMAND, motorista_step)], 
             TAMANHO: [MessageHandler(filters.TEXT & ~filters.COMMAND, tamanho_step)], 
             DATA_FAB: [MessageHandler(filters.TEXT & ~filters.COMMAND, data_fab_step)], 
@@ -545,13 +564,11 @@ def run_flask():
     )
     application.add_handler(conv)
     application.add_handler(CommandHandler("start", start))
-    
     async def setup():
         await application.initialize()
         await application.start()
         await application.bot.set_webhook(f"{WEBHOOK_URL}/webhook", drop_pending_updates=True)
-        print(f"✅ WEBHOOK SETADO: {WEBHOOK_URL}/webhook - FIM DO CONFLICT")
-    
+        print(f"✅ WEBHOOK SETADO: {WEBHOOK_URL}/webhook - FIM DO CONFLICT + FIX TELEFONE")
     loop.run_until_complete(setup())
     app_flask.run(host='0.0.0.0', port=int(os.environ.get("PORT",10000)))
 
