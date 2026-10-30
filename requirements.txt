@@ -3,3 +3,4 @@ Pillow
 python-telegram-bot==22.3
 openpyxl
 pandas
+psycopg2-binary
