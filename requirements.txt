@@ -1,6 +1,6 @@
-python-telegram-bot==20.7
-psycopg2-binary==2.9.9
-pandas==2.1.4
-matplotlib==3.8.2
-openpyxl==3.1.2
-python-dotenv==1.0.0
+python-telegram-bot
+psycopg2-binary
+pandas
+matplotlib
+openpyxl
+python-dotenv
