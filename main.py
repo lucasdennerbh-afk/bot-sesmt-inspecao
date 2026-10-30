@@ -1,10 +1,10 @@
-import os, threading, csv, datetime, re, uuid, json, unicodedata, requests
+import os, threading, csv, datetime, re, uuid, json, unicodedata
 from collections import Counter, defaultdict
 from flask import Flask, send_from_directory, request, send_file, redirect
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, ConversationHandler, filters, ContextTypes
 
-TOKEN = os.environ.get("BOT_TOKEN", "").strip()
+TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_SENHA = os.environ.get("ADMIN_SENHA","telemont2026")
 ARQ_FUNC = "funcionarios.csv"
 ARQ_CAD = "cadastros.csv"
@@ -14,16 +14,6 @@ ARQ_JUST = "justificativas.csv"
 PASTA_MASC = "mascaras"
 BANNER = "banner.jpg"
 ARQ_SUP_EMAIL = "supervisores.csv"
-
-# --- SUPABASE OPCIONAL (CORREÇÃO DNS) ---
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "").strip()
-# Aceita tanto sb_secret_ curta quanto eyJ... longa
-HEADERS_SUP = {
-    "apikey": SUPABASE_KEY,
-    "Authorization": f"Bearer {SUPABASE_KEY}"
-} if SUPABASE_KEY else {}
-
 os.makedirs(PASTA_MASC, exist_ok=True)
 
 FUNCIONARIOS = {}
@@ -67,9 +57,7 @@ def carregar_funcionarios():
                     FUNCIONARIOS[chapa_6] = {"nome": str(r.get(nome_col,"")).strip().upper(),"cargo": str(r.get(cargo_col,"")).strip().upper(),"admissao": str(r.get(adm_col,"")).strip(),"supervisor": nome_sup,"coordenador": nome_coord}
                     FUNCIONARIOS[chapa_raw] = FUNCIONARIOS[chapa_6]
                 except: continue
-        print(f"CSV carregado: {len(FUNCIONARIOS)} registros")
-    except Exception as e:
-        print(f"Erro carregar CSV: {e}")
+    except: pass
 carregar_funcionarios()
 
 EMAILS_SUP = {}
@@ -134,45 +122,9 @@ ITENS = [
 
 CHAPA, TELEFONE, EH_MOTORISTA, TAMANHO, DATA_FAB, STATUS, CONE_TIPO, CONE_QTD = range(8)
 
-# --- BUSCA CORRIGIDA: SUPABASE via REQUESTS + FALLBACK CSV ---
-def buscar_func_supabase(chapa_str):
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        return None
-    tentativas = [chapa_str.strip(), chapa_str.strip().zfill(6), chapa_str.strip().lstrip("0")]
-    tentativas = list(dict.fromkeys(tentativas))
-    for tentativa in tentativas:
-        try:
-            url = f"{SUPABASE_URL}/rest/v1/funcionarios?chapa=eq.{tentativa}&select=*"
-            r = requests.get(url, headers=HEADERS_SUP, timeout=10)
-            if r.status_code == 200 and r.json():
-                d = r.json()[0]
-                # converte formato supabase pro formato do bot
-                return {
-                    "nome": str(d.get("nome","")).upper(),
-                    "cargo": str(d.get("cargo","") or d.get("funcao","")).upper(),
-                    "admissao": str(d.get("admissao","") or d.get("data_admissao","")),
-                    "supervisor": str(d.get("supervisor","")).upper(),
-                    "coordenador": str(d.get("coordenador","") or d.get("gerente","")).upper()
-                }
-        except Exception as e:
-            print(f"Supabase erro {tentativa}: {e}")
-            continue
-    return None
-
 def buscar_func(chapa):
-    # 1. Tenta Supabase primeiro (requests = resolve DNS no Render)
-    if SUPABASE_URL and SUPABASE_KEY:
-        res = buscar_func_supabase(str(chapa))
-        if res:
-            print(f"Achou no Supabase: {chapa} -> {res['nome']}")
-            return res
-    # 2. Fallback CSV local
     c = str(chapa).strip().zfill(6)
-    result = FUNCIONARIOS.get(c) or FUNCIONARIOS.get(str(chapa).strip())
-    if result:
-        print(f"Achou no CSV: {chapa} -> {result['nome']}")
-    return result
-
+    return FUNCIONARIOS.get(c) or FUNCIONARIOS.get(str(chapa).strip())
 def ja_inspecionou(chapa):
     try:
         with open(ARQ_INS, encoding="utf-8") as f:
@@ -223,6 +175,7 @@ def get_justificados():
 def gerar_mascara_txt(dados_colab, lista_nao_conforme):
     txt = f"""========================================
     PEDIDO DE EPI - NÃO CONFORME - SESMT
+
 DATA/HORA: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}
 CHAPA: {dados_colab['chapa']}
 NOME: {dados_colab['nome']}
@@ -284,12 +237,13 @@ def enviar_email_nao_conforme(supervisor_nome, coordenador_nome, chapa, nome_col
 
 app_flask = Flask(__name__)
 @app_flask.route('/')
-def home(): return f"BOT SESMT ON - <a href='/base'>BASE</a> | <a href='/graficos'>GRAFICOS</a> | <a href='/admin?senha={ADMIN_SENHA}'>ADMIN</a>"
+def home(): return f"BOT SESMT ON - <a href='/base'>BASE ESTATISTICA</a> | <a href='/graficos'>GRAFICOS</a> | <a href='/admin?senha={ADMIN_SENHA}'>ADMIN</a>"
 @app_flask.route('/mascaras/<path:filename>')
 def masc(filename): return send_from_directory(PASTA_MASC, filename)
 
 def gerar_excel_completo(caminho="/tmp/sesmt_completo.xlsx", filtro_supervisor="", filtro_coordenador=""):
-    try: import pandas as pd
+    try:
+        import pandas as pd
     except: return None
     linhas=[]
     try:
@@ -352,8 +306,22 @@ def base():
     todos_coord = sorted(COORDENADORES_LISTA)
     opt_sup = "".join([f"<option value='{s}' {'selected' if s==filtro_sup else ''}>{s}</option>" for s in todos_sup])
     opt_coord = "".join([f"<option value='{c}' {'selected' if c==filtro_coord else ''}>{c}</option>" for c in todos_coord])
-    html = f"<html><head><meta charset='utf-8'><title>BASE</title><style>body{{font-family:Arial;padding:15px;background:#f0f2f5}} .card{{background:white;padding:15px;border-radius:10px;margin-bottom:20px}} table{{width:100%;border-collapse:collapse;background:white;font-size:12px}} th,td{{border:1px solid #ddd;padding:7px}} th{{background:#0F4C8F;color:white}} .btn{{padding:8px 14px;border-radius:5px;color:white;text-decoration:none;display:inline-block;font-size:12px;margin:2px}} .badge{{padding:3px 8px;border-radius:10px;color:white;font-weight:bold}} h2{{color:#0F4C8F}} select{{padding:8px;min-width:300px}}</style></head><body><h2>BASE ESTATISTICA</h2><div class='card'><form method='get'>SUPERVISOR: <select name='supervisor'><option value=''>-- TODOS --</option>{opt_sup}</select> COORD: <select name='coordenador'><option value=''>-- TODOS --</option>{opt_coord}</select><button class='btn' style='background:#0F4C8F'>FILTRAR</button> <a class='btn' style='background:#6c757d' href='/base'>Limpar</a></form></div>"
-    html += "<div class='card'><table><tr><th>SUPERVISOR</th><th>TOTAL</th><th>FEITOS</th><th>JUST</th><th>PEND</th><th>%</th></tr>"
+    html = f"""
+    <html><head><meta charset='utf-8'><title>BASE ESTATISTICA</title>
+    <style>body{{font-family:Arial;padding:15px;background:#f0f2f5}} .card{{background:white;padding:15px;border-radius:10px;margin-bottom:20px}} table{{width:100%;border-collapse:collapse;background:white;font-size:12px}} th,td{{border:1px solid #ddd;padding:7px}} th{{background:#0F4C8F;color:white}} .btn{{padding:8px 14px;border-radius:5px;color:white;text-decoration:none;display:inline-block;font-size:12px;margin:2px}} .badge{{padding:3px 8px;border-radius:10px;color:white;font-weight:bold}} h2{{color:#0F4C8F}} select{{padding:8px;min-width:300px}}</style></head><body>
+    <h2>📊 ESTATÍSTICA - BASE SESMT</h2>
+    <a class='btn' style='background:red' href='/admin?senha={ADMIN_SENHA}'>🔒 ADMIN - CONTROLE</a>
+    <div class='card' style='background:#e8f0fe;border:2px solid #0F4C8F'>
+        <form method='get'><b>FILTRAR:</b><br>
+            SUPERVISOR: <select name='supervisor'><option value=''>-- TODOS --</option>{opt_sup}</select>
+            COORDENADOR: <select name='coordenador'><option value=''>-- TODOS --</option>{opt_coord}</select>
+            <button class='btn' style='background:#0F4C8F'>🔍 FILTRAR</button>
+            <a class='btn' style='background:#6c757d' href='/base'>Limpar</a>
+            <a class='btn' style='background:green' href='/base_excel?supervisor={filtro_sup}&coordenador={filtro_coord}'>📥 EXCEL FILTRADO</a>
+        </form>
+    </div>
+    """
+    html += "<div class='card'><h3>RESUMO GERAL</h3><table><tr><th>SUPERVISOR</th><th>TOTAL</th><th>FEITOS</th><th>JUST</th><th>PEND</th><th>%</th></tr>"
     for sup, lista_colab in sorted(por_supervisor.items()):
         total = len(lista_colab)
         feitos_sup = sum(1 for c in lista_colab if c['chapa'] in feitos)
@@ -365,18 +333,101 @@ def base():
     html += "</table></div></body></html>"
     return html
 
+@app_flask.route('/base_excel')
+def base_excel():
+    filtro_sup = request.args.get('supervisor','').strip().upper()
+    filtro_coord = request.args.get('coordenador','').strip().upper()
+    try:
+        import pandas as pd
+    except: return "Instale pandas"
+    feitos = set()
+    try:
+        with open(ARQ_INS, encoding="utf-8") as f:
+            for r in csv.DictReader(f): feitos.add(str(r.get('chapa','')).zfill(6))
+    except: pass
+    justificados = get_justificados()
+    linhas=[]
+    chapas_unicas=set()
+    for chapa_key, dados in FUNCIONARIOS.items():
+        ch6 = chapa_key.zfill(6)
+        if len(ch6)!=6 or ch6 in chapas_unicas: continue
+        chapas_unicas.add(ch6)
+        sup = dados.get('supervisor','')
+        coord = dados.get('coordenador','')
+        if filtro_sup and filtro_sup not in sup: continue
+        if filtro_coord and filtro_coord not in coord: continue
+        status = "FEITO" if ch6 in feitos else "JUSTIFICADO" if ch6 in justificados else "PENDENTE"
+        linhas.append({"CHAPA":ch6,"NOME":dados.get('nome',''),"SUPERVISOR":sup,"COORDENADOR":coord,"STATUS":status})
+    df = pd.DataFrame(linhas)
+    caminho="/tmp/base_filtrada.xlsx"
+    with pd.ExcelWriter(caminho, engine='openpyxl') as writer:
+        df.to_excel(writer, sheet_name='BASE_FILTRADA', index=False)
+    return send_file(caminho, as_attachment=True, download_name=f"BASE_{filtro_sup or 'TODOS'}.xlsx")
+
+@app_flask.route('/base_estatistica_excel')
+def base_estatistica_excel():
+    try:
+        import pandas as pd
+    except: return "Instale pandas"
+    feitos = set()
+    try:
+        with open(ARQ_INS, encoding="utf-8") as f:
+            for r in csv.DictReader(f): feitos.add(str(r.get('chapa','')).zfill(6))
+    except: pass
+    justificados = get_justificados()
+    por_sup = defaultdict(list)
+    chapas_unicas=set()
+    for chapa_key, dados in FUNCIONARIOS.items():
+        ch6 = chapa_key.zfill(6)
+        if len(ch6)!=6 or ch6 in chapas_unicas: continue
+        chapas_unicas.add(ch6)
+        por_sup[dados.get('supervisor','')].append((ch6,dados))
+    resumo=[]
+    for sup, lista in por_sup.items():
+        total=len(lista)
+        feitos_sup=sum(1 for ch,_ in lista if ch in feitos)
+        just_sup=sum(1 for ch,_ in lista if ch in justificados)
+        pend=total-feitos_sup-just_sup
+        perc=int((feitos_sup+just_sup)/total*100) if total else 0
+        resumo.append({"SUPERVISOR":sup,"TOTAL":total,"FEITOS":feitos_sup,"JUSTIFICADOS":just_sup,"PENDENTES":pend,"PERC":perc})
+    df = pd.DataFrame(resumo)
+    caminho="/tmp/estatistica.xlsx"
+    with pd.ExcelWriter(caminho, engine='openpyxl') as writer:
+        df.to_excel(writer, sheet_name='ESTATISTICA', index=False)
+    return send_file(caminho, as_attachment=True, download_name="ESTATISTICA.xlsx")
+
 @app_flask.route('/admin')
 def admin_panel():
     senha = request.args.get('senha','')
-    if senha != ADMIN_SENHA: return f"<form><input type='password' name='senha'><button>Entrar</button></form>"
-    return f"<html><body><h2>ADMIN</h2><a href='/base'>BASE</a> | Total Func: {len(FUNCIONARIOS)}<br><br><form action='/admin/liberar'><input type='hidden' name='senha' value='{ADMIN_SENHA}'><input name='chapa' placeholder='CHAPA'><button>LIBERAR</button></form></body></html>"
+    if senha != ADMIN_SENHA:
+        return f"<html><head><meta charset='utf-8'></head><body><form method='get'><h2>ADMIN</h2><input type='password' name='senha' placeholder='Senha'><button>Entrar</button></form></body></html>"
+    total_inspecoes = 0
+    chapas_feitas = set()
+    try:
+        with open(ARQ_INS, encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                total_inspecoes+=1
+                chapas_feitas.add(str(r.get('chapa','')).zfill(6))
+    except: pass
+    total_func = len(set([k for k in FUNCIONARIOS.keys() if len(k)==6]))
+    html = f"""
+    <html><head><meta charset='utf-8'><title>ADMIN</title>
+    <style>body{{font-family:Arial;padding:20px;background:#f0f2f5}} .card{{background:white;padding:20px;border-radius:10px;margin-bottom:20px}} th,td{{border:1px solid #ddd;padding:8px;font-size:12px}} th{{background:#dc3545;color:white}} .btn{{padding:10px 15px;border-radius:5px;color:white;text-decoration:none;display:inline-block;margin:3px;border:none;cursor:pointer}} input,select{{padding:10px;margin:5px;width:300px}}</style>
+    </head><body><h2>🔒 ADMIN - CONTROLE</h2><a class='btn' style='background:#0F4C8F' href='/base'>BASE</a> <a class='btn' style='background:#6c757d' href='/graficos'>Gráficos</a>
+    <div class='card'>Total Func: {total_func} | Feitas: {len(chapas_feitas)} | Registros: {total_inspecoes}</div>
+    <div class='card'><h3>✅ LIBERAR CHAPA</h3><form method='get' action='/admin/liberar'><input type='hidden' name='senha' value='{ADMIN_SENHA}'><input name='chapa' placeholder='CHAPA' required><button class='btn' style='background:#28a745'>LIBERAR</button></form></div>
+    <div class='card'><h3>🗑️ ZERAR TUDO</h3><form method='get' action='/admin/zerar' onsubmit="return confirm('ZERAR TUDO?');"><input type='hidden' name='senha' value='{ADMIN_SENHA}'><input name='confirmar' placeholder='Digite ZERAR' required><button class='btn' style='background:#dc3545'>ZERAR</button></form></div>
+    <div class='card'><h3>👷 EXCLUIR SUPERVISOR</h3><form method='get' action='/admin/excluir_supervisor'><input type='hidden' name='senha' value='{ADMIN_SENHA}'><input name='supervisor' placeholder='Nome supervisor' style='width:400px' required><select name='tipo'><option value='equipe'>Excluir equipe</option><option value='so_supervisor'>Só supervisor</option><option value='nome'>Por nome</option></select><button class='btn' style='background:#ff6b00'>EXCLUIR</button></form></div>
+    </body></html>
+    """
+    return html
 
 @app_flask.route('/admin/liberar')
 def admin_liberar():
     senha = request.args.get('senha','')
     if senha != ADMIN_SENHA: return "Senha inválida"
     chapa = str(request.args.get('chapa','')).zfill(6)
-    for arq, fields in [(ARQ_INS, ["data","chapa","nome","cargo","supervisor","coordenador","telefone","eh_motorista","item","tamanho","data_fab","validade","status"])]:
+    for arq, fields in [(ARQ_INS, ["data","chapa","nome","cargo","supervisor","coordenador","telefone","eh_motorista","item","tamanho","data_fab","validade","status"]), (ARQ_JUST, ["data","chapa","nome","supervisor","coordenador","motivo"]), (ARQ_CAD, ["chapa","nome","cargo","data_admissao","supervisor","coordenador","telefone","id_telegram","eh_motorista"])]:
         novas=[]
         try:
             with open(arq, encoding="utf-8") as f:
@@ -386,20 +437,242 @@ def admin_liberar():
                 w=csv.DictWriter(f, fieldnames=fields)
                 w.writeheader(); w.writerows(novas)
         except: pass
-    return f"<script>alert('Liberada {chapa}');window.location='/admin?senha={ADMIN_SENHA}';</script>"
+    return f"<script>alert('Chapa {chapa} LIBERADA!');window.location='/admin?senha={ADMIN_SENHA}';</script>"
 
+@app_flask.route('/admin/zerar')
+def admin_zerar():
+    senha = request.args.get('senha','')
+    confirmar = request.args.get('confirmar','')
+    if senha != ADMIN_SENHA: return "Senha inválida"
+    if confirmar.upper() != "ZERAR": return f"<script>alert('Digite ZERAR');window.location='/admin?senha={ADMIN_SENHA}';</script>"
+    for arq, head in [(ARQ_INS, ["data","chapa","nome","cargo","supervisor","coordenador","telefone","eh_motorista","item","tamanho","data_fab","validade","status"]), (ARQ_CAD, ["chapa","nome","cargo","data_admissao","supervisor","coordenador","telefone","id_telegram","eh_motorista"]), (ARQ_PEDIDOS, ["data","chapa","nome","telefone","supervisor","mascara_txt"]), (ARQ_JUST, ["data","chapa","nome","supervisor","coordenador","motivo"])]:
+        try:
+            with open(arq, "w", newline="", encoding="utf-8") as f: csv.writer(f).writerow(head)
+        except: pass
+    return f"<script>alert('ZERADO!');window.location='/admin?senha={ADMIN_SENHA}';</script>"
+
+@app_flask.route('/admin/excluir_supervisor')
+def admin_excluir_sup():
+    senha = request.args.get('senha','')
+    if senha != ADMIN_SENHA: return "Senha inválida"
+    supervisor = request.args.get('supervisor','').strip().upper()
+    tipo = request.args.get('tipo','equipe')
+    linhas=[]; fieldnames=None
+    try:
+        with open(ARQ_FUNC, encoding="utf-8-sig") as f:
+            primeira = f.readline()
+            delim = ";" if ";" in primeira else ","
+            f.seek(0)
+            reader = csv.DictReader(f, delimiter=delim)
+            fieldnames = reader.fieldnames
+            for r in reader: linhas.append(r)
+    except Exception as e: return f"Erro: {e}"
+    sup_col = next((c for c in fieldnames if "superv" in c.lower()), fieldnames[2])
+    nome_col = next((c for c in fieldnames if "nome" in c.lower()), fieldnames[1])
+    chapa_col = fieldnames[0]
+    depois=[]
+    for r in linhas:
+        chapa = str(r.get(chapa_col,"")).zfill(6)
+        nome_sup = str(r.get(sup_col,"")).strip().upper()
+        nome_colab = str(r.get(nome_col,"")).strip().upper()
+        if tipo == 'equipe' and (supervisor in nome_sup or supervisor == chapa): continue
+        if tipo == 'so_supervisor' and (supervisor == chapa or supervisor in nome_colab): continue
+        if tipo == 'nome' and supervisor in nome_colab: continue
+        depois.append(r)
+    try:
+        with open(ARQ_FUNC, "w", newline="", encoding="utf-8") as f:
+            w=csv.DictWriter(f, fieldnames=fieldnames)
+            w.writeheader(); w.writerows(depois)
+    except Exception as e: return f"Erro salvar: {e}"
+    carregar_funcionarios(); carregar_emails_sup()
+    return f"<script>alert('Excluídos {len(linhas)-len(depois)} registros!');window.location='/admin?senha={ADMIN_SENHA}';</script>"
+
+# ===== NOVO DASHBOARD SUPABASE - IGUAL DA FOTO =====
 @app_flask.route('/graficos')
 def graficos():
+    filtro_busca = request.args.get('busca','').strip().upper()
+    filtro_sup = request.args.get('supervisor','').strip().upper()
+    filtro_coord = request.args.get('coordenador','').strip().upper() or request.args.get('gerente','').strip().upper()
+    filtro_item = request.args.get('item','').strip().upper()
+
     linhas=[]
     try:
         with open(ARQ_INS, encoding="utf-8") as f:
-            linhas=list(csv.DictReader(f))
+            for r in csv.DictReader(f):
+                sup = str(r.get('supervisor','')).upper()
+                coord = str(r.get('coordenador','')).upper()
+                item = str(r.get('item','')).upper()
+                chapa = str(r.get('chapa','')).upper()
+                nome = str(r.get('nome','')).upper()
+                if filtro_sup and filtro_sup not in sup: continue
+                if filtro_coord and filtro_coord not in coord: continue
+                if filtro_item and filtro_item not in item: continue
+                if filtro_busca and filtro_busca not in chapa and filtro_busca not in nome: continue
+                linhas.append(r)
     except: linhas=[]
-    df_nc = [r for r in linhas if r.get('status')=='Não Conforme']
-    cont_item = Counter([r.get('item','') for r in df_nc])
-    tabela = "".join([f"<tr><td>{i}</td><td style='color:red'><b>{q}</b></td></tr>" for i,q in cont_item.most_common()])
-    return f"<html><body><h2>DASHBOARD</h2><a href='/base'>BASE</a><table border=1><tr><th>ITEM</th><th>QTD NC</th></tr>{tabela}</table></body></html>"
 
+    df_nc = [r for r in linhas if 'NÃO CONFORME' in str(r.get('status','')).upper() or 'NAO CONFORME' in str(r.get('status','')).upper()]
+    total_nc = len(df_nc)
+
+    cont_item = Counter([r.get('item','').strip() for r in df_nc])
+    cont_sup = Counter([r.get('supervisor','').strip() for r in df_nc])
+    cont_tam = Counter([r.get('tamanho','').strip() for r in df_nc if r.get('tamanho','').strip()])
+
+    item_critico, qtd_critico = cont_item.most_common(1)[0] if cont_item else ("-", 0)
+    sup_critico, qtd_sup_critico = cont_sup.most_common(1)[0] if cont_sup else ("-", 0)
+    tam_critico, qtd_tam_critico = cont_tam.most_common(1)[0] if cont_tam else ("-", 0)
+    perc_critico = int(qtd_critico/total_nc*100) if total_nc else 0
+
+    todos_sup = sorted(SUPERVISORES_LISTA)
+    todos_coord = sorted(COORDENADORES_LISTA)
+    todos_itens = sorted(set([i['nome'] for i in ITENS]))
+
+    options_sup = "".join([f"<option value='{s}' {'selected' if s==filtro_sup else ''}>{s}</option>" for s in todos_sup])
+    options_coord = "".join([f"<option value='{c}' {'selected' if c==filtro_coord else ''}>{c}</option>" for c in todos_coord])
+    options_item = "".join([f"<option value='{it}' {'selected' if it==filtro_item else ''}>{it}</option>" for it in todos_itens])
+
+    cont_item_tam = defaultdict(int)
+    for r in df_nc:
+        key = (r.get('item',''), r.get('tamanho',''))
+        cont_item_tam[key] += 1
+    total_por_item = Counter([r.get('item','') for r in df_nc])
+    
+    linhas_tabela = ""
+    for (item, tam), qtd in sorted(cont_item_tam.items(), key=lambda x: x[1], reverse=True)[:100]:
+        total_item = total_por_item.get(item, 1)
+        perc = int(qtd/total_item*100) if total_item else 0
+        linhas_tabela += f"<tr><td>{item}</td><td>{tam or '-'}</td><td style='text-align:center'><b>{qtd}</b></td><td style='text-align:center'>{total_item}</td><td style='text-align:center'>{perc}%</td></tr>"
+    
+    tabela_sup_soma = "".join([f"<tr><td>{sup}</td><td style='text-align:center;color:#f87171'><b>{qtd}</b></td></tr>" for sup,qtd in cont_sup.most_common()])
+    tabela_ranking = "".join([f"<tr><td>{item}</td><td style='text-align:center'><b>{qtd}</b></td><td style='text-align:center'>{int(qtd/total_nc*100) if total_nc else 0}%</td></tr>" for item,qtd in cont_item.most_common()])
+
+    cores = ["#8b5cf6","#06b6d4","#f59e0b","#10b981","#ef4444","#ec4899","#6366f1"]
+    barras = ""
+    for i, (item, qtd) in enumerate(cont_item.most_common(8)):
+        perc = int(qtd/total_nc*100) if total_nc else 0
+        cor = cores[i % len(cores)]
+        barras += f"<div style='margin-bottom:10px'><div style='display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px'><span style='color:#cbd5e1'>{item[:30]}</span><span style='color:white'><b>{perc}%</b> ({qtd})</span></div><div style='background:#1e293b;height:8px;border-radius:10px'><div style='width:{perc}%;background:{cor};height:8px;border-radius:10px'></div></div></div>"
+    if not barras:
+        barras = f"<div style='display:flex;flex-direction:column;align-items:center;justify-content:center;height:220px'><div style='font-size:42px;font-weight:bold;color:white'>0</div><div style='font-size:10px;color:#94a3b8'>TOTAL NC</div></div>"
+
+    html = f"""
+    <html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>DASHBOARD SUPABASE</title>
+    <style>
+    *{{box-sizing:border-box}} body{{margin:0;font-family:Inter,Arial;background:#0f172a;color:white;padding:20px}}
+    .top{{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}}
+    .top h1{{margin:0;font-size:30px;letter-spacing:-1px;font-weight:900}} .top h1 span{{color:#a78bfa}}
+    .btn{{background:white;color:#0f172a;border:none;padding:9px 20px;border-radius:20px;font-weight:bold;cursor:pointer;text-decoration:none}}
+    .filtros{{background:#1e293b;padding:15px;border-radius:16px;display:flex;gap:12px;margin:15px 0;flex-wrap:wrap;border:1px solid #334155}}
+    .filtros input, .filtros select{{background:#0f172a;border:1px solid #334155;color:#cbd5e1;padding:11px 14px;border-radius:12px;min-width:220px;flex:1}}
+    .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:15px;margin-bottom:20px}}
+    .card{{padding:18px;border-radius:16px;color:white;min-height:105px}}
+    .card p{{margin:0;font-size:10px;opacity:0.85;letter-spacing:1px}} .card h2{{margin:8px 0 4px 0;font-size:28px;line-height:1}} .card small{{font-size:11px;opacity:0.9}}
+    .c1{{background:linear-gradient(135deg,#8b5cf6,#6366f1)}} .c2{{background:linear-gradient(135deg,#06b6d4,#3b82f6)}} .c3{{background:linear-gradient(135deg,#f59e0b,#ef4444)}} .c4{{background:linear-gradient(135deg,#10b981,#059669)}}
+    .grid{{display:grid;grid-template-columns:1.2fr 2fr;gap:15px;margin-bottom:15px}} @media(max-width:900px){{.grid{{grid-template-columns:1fr}}}}
+    .box{{background:#1e293b;border-radius:16px;padding:18px;border:1px solid #334155}}
+    .box h3{{margin:0 0 15px 0;font-size:14px;color:#e2e8f0}}
+    table{{width:100%;border-collapse:collapse;font-size:12px}} th{{color:#94a3b8;font-weight:500;text-align:left;padding:10px 8px;border-bottom:1px solid #334155;font-size:10px}} td{{padding:10px 8px;border-bottom:1px solid #1e293b;color:#cbd5e1}}
+    .grid2{{display:grid;grid-template-columns:1fr 1fr;gap:15px}} @media(max-width:900px){{.grid2{{grid-template-columns:1fr}}}}
+    </style></head><body>
+    <div class='top'><div><h1>DASHBOARD <span>SUPABASE</span></h1><div style='color:#94a3b8;font-size:13px'>Total NC: <b style='color:white'>{total_nc}</b></div></div><a class='btn' href='/graficos'>Atualizar</a></div>
+
+    <form method='get' class='filtros'>
+        <input name='busca' value='{filtro_busca}' placeholder='Chapa ou Nome - ex: 100012'>
+        <select name='supervisor'><option value=''>Todos Supervisores</option>{options_sup}</select>
+        <select name='coordenador'><option value=''>Todos Coordenadores</option>{options_coord}</select>
+        <select name='item'><option value=''>Todos Itens</option>{options_item}</select>
+        <button class='btn' style='background:#8b5cf6;color:white'>Filtrar</button>
+        <a href='/graficos' style='color:#94a3b8;text-decoration:none;padding:10px'>Limpar</a>
+    </form>
+
+    <div class='cards'>
+        <div class='card c1'><p>TOTAL NC</p><h2>{total_nc}</h2><small>{len(cont_item)} itens</small></div>
+        <div class='card c2'><p>ITEM CRÍTICO</p><h2 style='font-size:16px'>{item_critico[:26] if item_critico!='-' else '-'}</h2><small>{perc_critico}%</small></div>
+        <div class='card c3'><p>SUPERVISOR +NC</p><h2 style='font-size:15px'>{sup_critico[:22] if sup_critico!='-' else '-'}</h2><small>{qtd_sup_critico}</small></div>
+        <div class='card c4'><p>TAMANHO +FALTA</p><h2 style='font-size:16px'>{tam_critico or '-'}</h2><small>{qtd_tam_critico}</small></div>
+    </div>
+
+    <div class='grid'>
+        <div class='box'><h3>% por Item (Colorido)</h3>{barras}</div>
+        <div class='box'><h3>Item | Tamanho | Qtd | Total Item | %</h3><div style='overflow:auto;max-height:360px'><table><tr><th>ITEM</th><th>TAMANHO</th><th>QTD</th><th>TOTAL ITEM</th><th>%</th></tr>{linhas_tabela if linhas_tabela else "<tr><td colspan=5 style='text-align:center'>Sem dados</td></tr>"}<tr style='background:#0f172a;font-weight:bold'><td colspan=2 style='text-align:center'>TOTAL</td><td style='text-align:center'>{total_nc}</td><td style='text-align:center'>{total_nc}</td><td style='text-align:center'>100%</td></tr></table></div></div>
+    </div>
+
+    <div class='grid2'>
+        <div class='box'><h3>NC por Supervisor - SOMA</h3><div style='overflow:auto;max-height:350px'><table><tr><th>SUPERVISOR</th><th>QTD</th></tr>{tabela_sup_soma if tabela_sup_soma else "<tr><td>-</td><td>0</td></tr>"}</table></div></div>
+        <div class='box'><h3>Ranking Itens</h3><div style='overflow:auto;max-height:350px'><table><tr><th>ITEM</th><th>QTD</th><th>%</th></tr>{tabela_ranking if tabela_ranking else "<tr><td>-</td><td>0</td><td>0%</td></tr>"}</table></div></div>
+    </div>
+
+    <div style='margin-top:20px;text-align:center'><a href='/base' style='color:#a78bfa;text-decoration:none;margin-right:20px'>BASE</a><a href='/admin?senha={ADMIN_SENHA}' style='color:#94a3b8;text-decoration:none'>ADMIN</a></div>
+    </body></html>
+    """
+    return html
+
+@app_flask.route('/justificar_form/<chapa>')
+def justificar_form(chapa):
+    chapa = str(chapa).zfill(6)
+    dados = FUNCIONARIOS.get(chapa, {})
+    return f"<html><body><h2>Justificar {chapa} - {dados.get('nome','')}</h2><form method='post' action='/justificar/{chapa}'><select name='motivo' required><option value='Férias'>Férias</option><option value='Desligado'>Desligado</option><option value='Outro'>Outro</option></select><textarea name='obs'></textarea><button>Salvar</button></form></body></html>"
+
+@app_flask.route('/justificar/<chapa>', methods=['POST'])
+def justificar(chapa):
+    chapa = str(chapa).zfill(6)
+    dados = FUNCIONARIOS.get(chapa, {})
+    motivo = request.form.get('motivo','')
+    obs = request.form.get('obs','')
+    motivo_full = f"{motivo} - {obs}" if obs else motivo
+    data = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+    with open(ARQ_JUST, "a", newline="", encoding="utf-8") as f:
+        csv.writer(f).writerow([data, chapa, dados.get('nome',''), dados.get('supervisor',''), dados.get('coordenador',''), motivo_full])
+    return f"<script>alert('Justificada!');window.location='/base';</script>"
+
+@app_flask.route('/remover_just/<chapa>')
+def remover_just(chapa):
+    chapa = str(chapa).zfill(6)
+    novas=[]
+    try:
+        with open(ARQ_JUST, encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                if str(r.get('chapa','')).zfill(6)!=chapa: novas.append(r)
+        with open(ARQ_JUST, "w", newline="", encoding="utf-8") as f:
+            w=csv.DictWriter(f, fieldnames=["data","chapa","nome","supervisor","coordenador","motivo"])
+            w.writeheader(); w.writerows(novas)
+    except: pass
+    return f"<script>alert('Removida!');window.location='/base';</script>"
+
+@app_flask.route('/emails')
+def ver_emails():
+    html="<h2>Emails</h2><a href='/base'>BASE</a> | <a href='/graficos'>GRAFICOS</a><br><br><table border=1 cellpadding=8><tr><th>NOME</th><th>EMAIL</th></tr>"
+    for n,e in sorted(EMAILS_SUP.items()): html+=f"<tr><td>{n}</td><td>{e}</td></tr>"
+    html+="</table>"
+    return html
+
+@app_flask.route('/detalhe/<chapa>')
+def detalhe(chapa):
+    html=f"<h2>Detalhe {chapa}</h2><a href='/base'>Voltar</a><br><table border=1 cellpadding=6><tr><th>ITEM</th><th>TAM</th><th>FAB</th><th>STATUS</th></tr>"
+    try:
+        with open(ARQ_INS, encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                if str(r.get('chapa','')).zfill(6)==str(chapa).zfill(6):
+                    cor="red" if r.get('status')=="Não Conforme" else "green"
+                    html+=f"<tr><td>{r.get('item')}</td><td>{r.get('tamanho')}</td><td>{r.get('data_fab')}</td><td style='color:{cor}'><b>{r.get('status')}</b></td></tr>"
+    except: pass
+    html+="</table>"; return html
+
+@app_flask.route('/apagar/<chapa>')
+def apagar(chapa):
+    chapa=str(chapa).zfill(6); novas=[]
+    try:
+        with open(ARQ_INS, encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                if str(r.get('chapa','')).zfill(6)!=chapa: novas.append(r)
+        with open(ARQ_INS, "w", newline="", encoding="utf-8") as f:
+            w=csv.DictWriter(f, fieldnames=["data","chapa","nome","cargo","supervisor","coordenador","telefone","eh_motorista","item","tamanho","data_fab","validade","status"])
+            w.writeheader(); w.writerows(novas)
+    except: pass
+    return f"<script>alert('Liberada!');window.location='/base';</script>"
+
+@app_flask.route('/exportar')
+def exportar(): return send_file(ARQ_INS, as_attachment=True)
 def run_flask(): app_flask.run(host='0.0.0.0', port=int(os.environ.get("PORT",10000)))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -418,7 +691,11 @@ async def chapa_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not func: await update.message.reply_text(f"❌ Chapa {chapa} não existe."); return CHAPA
     if ja_inspecionou(chapa): 
         kb = ReplyKeyboardMarkup([[KeyboardButton("🔄 NOVA INSPEÇÃO - /start")]], resize_keyboard=True)
-        await update.message.reply_text(f"⛔ Chapa {chapa} já fez inspeção!", reply_markup=kb); return ConversationHandler.END
+        await update.message.reply_text(f"⛔ Chapa {chapa} já fez inspeção! Aguarde liberação do ADMIN.", reply_markup=kb); return ConversationHandler.END
+    just = get_justificados()
+    if chapa in just:
+        kb = ReplyKeyboardMarkup([[KeyboardButton("🔄 NOVA INSPEÇÃO - /start")]], resize_keyboard=True)
+        await update.message.reply_text(f"⛔ Chapa {chapa} JUSTIFICADA ({just[chapa].get('motivo')})!", reply_markup=kb); return ConversationHandler.END
     context.user_data['chapa']=chapa; context.user_data['func']=func
     cad=buscar_cadastro(chapa)
     if cad and cad.get('telefone'):
@@ -460,7 +737,7 @@ async def proximo_item(update, context):
         await update.message.reply_text(f"🔗 {idx+1}/{len(itens)} - {item['nome']}\nQtd mínima 3! Selecione:", reply_markup=ReplyKeyboardMarkup(kb, resize_keyboard=True, one_time_keyboard=True))
         return TAMANHO
     if item.get('tamanho'):
-        await update.message.reply_text(f"📏 {idx+1}/{len(itens)} - {item['nome']}\nDigite TAMANHO:")
+        await update.message.reply_text(f"📏 {idx+1}/{len(itens)} - {item['nome']}\nDigite {item.get('label_tamanho','TAMANHO')}:")
         return TAMANHO
     if item.get('data_fab'):
         await update.message.reply_text(f"📅 {idx+1}/{len(itens)} - {item['nome']}\nDigite DATA FAB DD/MM/AAAA:")
@@ -522,7 +799,9 @@ async def status_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return await proximo_item(update, context)
 
 async def finalizar(update, context):
-    await update.message.reply_text("⏳ Criando máscara e enviando e-mail...")
+    await update.message.reply_text("⏳ AGUARDANDO... Criando máscara e enviando e-mail...")
+    try: await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    except: pass
     chapa=context.user_data['chapa']; func=context.user_data['func']; tel=context.user_data['telefone']; eh_mot=context.user_data['eh_motorista']
     resultados=context.user_data['resultados']; nao_conf=context.user_data['nao_conforme_lista']
     data_hora=datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
@@ -534,14 +813,14 @@ async def finalizar(update, context):
     with open(ARQ_PEDIDOS, "a", newline="", encoding="utf-8") as f: csv.writer(f).writerow([data_hora, chapa, func['nome'], tel, func['supervisor'], txt_conteudo.replace("\n"," | ")])
     enviado=False; dest=[]
     if nao_conf:
-        await update.message.reply_text(f"📧 Enviando e-mail para {func['supervisor']}...")
+        await update.message.reply_text(f"📧 Enviando e-mail para supervisor {func['supervisor']}...")
         enviado, dest = enviar_email_nao_conforme(func['supervisor'], func['coordenador'], chapa, func['nome'], nao_conf, caminho_txt, dados_colab)
     msg=f"✅ FINALIZADA!\nCHAPA: {chapa}\nNÃO CONFORME: {len(nao_conf)}\n\n{txt_conteudo}"
     if enviado: msg+=f"\n\n📧 E-mail: {', '.join(dest)}"
+    elif nao_conf: msg+=f"\n\n❌ E-MAIL NÃO ENVIADO - Verifique EMAIL_USER/EMAIL_PASS no Render"
     await update.message.reply_text(msg)
     if os.path.exists(caminho_txt):
-        try: await context.bot.send_document(chat_id=update.effective_chat.id, document=open(caminho_txt, "rb"), filename=os.path.basename(caminho_txt))
-        except: pass
+        await context.bot.send_document(chat_id=update.effective_chat.id, document=open(caminho_txt, "rb"), filename=os.path.basename(caminho_txt))
     kb = ReplyKeyboardMarkup([[KeyboardButton("🔄 NOVA INSPEÇÃO - /start")]], resize_keyboard=True)
     await update.message.reply_text("👇 Para nova inspeção:", reply_markup=kb)
     return ConversationHandler.END
@@ -555,9 +834,6 @@ def main():
     import asyncio
     try: asyncio.set_event_loop(asyncio.new_event_loop())
     except: pass
-    if not TOKEN:
-        print("Falta BOT_TOKEN")
-        return
     app = Application.builder().token(TOKEN).build()
     conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
