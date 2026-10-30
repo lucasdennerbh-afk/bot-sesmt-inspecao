@@ -241,10 +241,12 @@ def home(): return f"BOT SESMT ON - <a href='/base'>BASE</a> | <a href='/grafico
 @app_flask.route('/mascaras/<path:filename>')
 def masc(filename): return send_from_directory(PASTA_MASC, filename)
 
+# ===== BASE CORRIGIDO + CLIQUE PEND =====
 @app_flask.route('/base')
 def base():
     filtro_sup = request.args.get('supervisor','').strip().upper()
     filtro_coord = request.args.get('coordenador','').strip().upper()
+
     feitos = set()
     try:
         with open(ARQ_INS, encoding="utf-8") as f:
@@ -252,27 +254,95 @@ def base():
                 feitos.add(str(r.get('chapa','')).zfill(6))
     except: pass
     justificados = get_justificados()
-    por_supervisor = defaultdict(list)
+
+    # LISTA UNICA - CORREÇÃO DO FILTRO VAZIO
     chapas_unicas = {}
-    for chapa_key, dados in FUNCIONARIOS.items():
-        ch6 = chapa_key.zfill(6)
-        if len(ch6)!=6 or ch6 in chapas_unicas: continue
-        chapas_unicas[ch6] = dados
-        sup = dados.get('supervisor','SEM SUPERVISOR')
-        coord = dados.get('coordenador','SEM COORDENADOR')
+    for k, v in FUNCIONARIOS.items():
+        ck = str(k).zfill(6)
+        if len(ck)==6 and ck not in chapas_unicas:
+            chapas_unicas[ck]=v
+
+    filtradas = {}
+    for ch6, dados in chapas_unicas.items():
+        sup = str(dados.get('supervisor','')).upper()
+        coord = str(dados.get('coordenador','')).upper()
         if filtro_sup and filtro_sup not in sup: continue
         if filtro_coord and filtro_coord not in coord: continue
-        por_supervisor[sup].append({'chapa':ch6})
+        filtradas[ch6]=dados
+
+    por_supervisor = defaultdict(list)
+    for ch6, dados in filtradas.items():
+        sup = dados.get('supervisor','SEM SUPERVISOR') or 'SEM SUPERVISOR'
+        por_supervisor[sup].append({'chapa':ch6, 'dados':dados})
+
     todos_sup = sorted(SUPERVISORES_LISTA)
     todos_coord = sorted(COORDENADORES_LISTA)
-    opt_sup = "".join([f"<option value='{s}' {'selected' if s==filtro_sup else ''}>{s}</option>" for s in todos_sup])
-    opt_coord = "".join([f"<option value='{c}' {'selected' if c==filtro_coord else ''}>{c}</option>" for c in todos_coord])
-    html = f"<html><head><meta charset='utf-8'><title>BASE</title><style>body{{font-family:Arial;padding:15px;background:#f0f2f5}} .card{{background:white;padding:15px;border-radius:10px;margin-bottom:20px}} table{{width:100%;border-collapse:collapse;background:white;font-size:12px}} th,td{{border:1px solid #ddd;padding:7px}} th{{background:#0F4C8F;color:white}}</style></head><body><h2>BASE</h2><div class='card'><form method='get'>SUP: <select name='supervisor'><option>-- TODOS --</option>{opt_sup}</select> COORD: <select name='coordenador'><option>-- TODOS --</option>{opt_coord}</select><button>Filtrar</button></form></div><div class='card'><table><tr><th>SUP</th><th>TOTAL</th><th>FEITOS</th><th>JUST</th><th>PEND</th><th>%</th></tr>"
+    opt_sup = "<option value=''>-- TODOS --</option>" + "".join([f"<option value='{s}' {'selected' if s==filtro_sup else ''}>{s}</option>" for s in todos_sup])
+    opt_coord = "<option value=''>-- TODOS --</option>" + "".join([f"<option value='{c}' {'selected' if c==filtro_coord else ''}>{c}</option>" for c in todos_coord])
+
+    linhas_html = ""
     for sup, lista in sorted(por_supervisor.items()):
-        total=len(lista); feitos_sup=sum(1 for c in lista if c['chapa'] in feitos); just_sup=sum(1 for c in lista if c['chapa'] in justificados); pend=total-feitos_sup-just_sup; perc=int((feitos_sup+just_sup)/total*100) if total else 0; cor="green" if perc>=100 else "orange" if perc>=50 else "red"
-        html+=f"<tr><td>{sup}</td><td>{total}</td><td>{feitos_sup}</td><td>{just_sup}</td><td>{pend}</td><td style='background:{cor};color:white'>{perc}%</td></tr>"
-    html+="</table></div></body></html>"
+        total=len(lista)
+        feitos_sup=sum(1 for c in lista if c['chapa'] in feitos)
+        just_sup=sum(1 for c in lista if c['chapa'] in justificados)
+        pend=total-feitos_sup-just_sup
+        perc=int((feitos_sup+just_sup)/total*100) if total else 0
+        cor="green" if perc>=100 else "orange" if perc>=50 else "red"
+        link_pend = f"/base/pendentes?supervisor={sup}" if pend>0 else "#"
+        linhas_html+=f"<tr><td>{sup}</td><td style='text-align:center'>{total}</td><td style='text-align:center'>{feitos_sup}</td><td style='text-align:center'>{just_sup}</td><td style='text-align:center'><a href='{link_pend}' style='background:#0F4C8F;color:white;padding:4px 10px;border-radius:10px;text-decoration:none;font-weight:bold'>{pend}</a></td><td style='text-align:center;background:{cor};color:white'>{perc}%</td></tr>"
+
+    if not linhas_html:
+        linhas_html = "<tr><td colspan=6 style='text-align:center;padding:20px'>Nenhum supervisor encontrado. Clique em Limpar.</td></tr>"
+
+    html = f"""
+    <html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>BASE</title>
+    <style>body{{font-family:Arial;padding:15px;background:#f0f2f5}} .card{{background:white;padding:15px;border-radius:10px;margin-bottom:20px}} table{{width:100%;border-collapse:collapse;background:white;font-size:13px}} th,td{{border:1px solid #ddd;padding:8px}} th{{background:#0F4C8F;color:white}} .btn{{padding:8px 14px;border-radius:5px;color:white;background:#0F4C8F;border:none;cursor:pointer;text-decoration:none;display:inline-block}}</style>
+    </head><body>
+    <h2>BASE - Filtrado: {len(filtradas)} / Total: {len(chapas_unicas)}</h2>
+    <div class='card'>
+      <form method='get'>SUP: <select name='supervisor'>{opt_sup}</select> COORD: <select name='coordenador'>{opt_coord}</select>
+      <button class='btn'>Filtrar</button> <a href='/base' class='btn' style='background:#666'>Limpar</a>
+      </form>
+      <div style='margin-top:8px;font-size:12px;color:#666'>Clique no número azul em PEND para justificar.</div>
+    </div>
+    <div class='card' style='overflow:auto'><table><tr><th>SUP</th><th>TOTAL</th><th>FEITOS</th><th>JUST</th><th>PEND</th><th>%</th></tr>{linhas_html}</table></div>
+    <div style='text-align:center'><a href='/graficos' class='btn'>GRAFICOS</a> <a href='/admin?senha={ADMIN_SENHA}' class='btn' style='background:#333'>ADMIN</a></div>
+    </body></html>"""
     return html
+
+@app_flask.route('/base/pendentes')
+def base_pendentes():
+    sup_filtro = request.args.get('supervisor','').strip().upper()
+    feitos = set()
+    try:
+        with open(ARQ_INS, encoding="utf-8") as f:
+            for r in csv.DictReader(f): feitos.add(str(r.get('chapa','')).zfill(6))
+    except: pass
+    justificados = get_justificados()
+    chapas_unicas = {}
+    for k, v in FUNCIONARIOS.items():
+        ck = str(k).zfill(6)
+        if len(ck)==6 and ck not in chapas_unicas: chapas_unicas[ck]=v
+    pendentes = []
+    for ch6, dados in chapas_unicas.items():
+        if sup_filtro and sup_filtro not in str(dados.get('supervisor','')).upper(): continue
+        if ch6 in feitos or ch6 in justificados: continue
+        pendentes.append({'chapa':ch6, 'nome':dados.get('nome',''), 'cargo':dados.get('cargo',''), 'sup':dados.get('supervisor',''), 'coord':dados.get('coordenador','')})
+    linhas = ""
+    for p in pendentes:
+        linhas += f"<tr><td>{p['chapa']}</td><td>{p['nome']}</td><td>{p['cargo']}</td><td><form action='/base/justificar' method='post' style='display:flex;gap:5px'><input type='hidden' name='chapa' value='{p['chapa']}'><input type='hidden' name='supervisor' value='{sup_filtro}'><input name='motivo' placeholder='Férias, Atestado, Demitido...' required style='flex:1'><button class='btn'>Justificar</button></form></td></tr>"
+    return f"<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><style>body{{font-family:Arial;padding:15px;background:#f0f2f5}} .card{{background:white;padding:15px;border-radius:10px;margin-bottom:15px}} table{{width:100%;border-collapse:collapse;font-size:12px;background:white}} th,td{{border:1px solid #ddd;padding:7px}} th{{background:#0F4C8F;color:white}} .btn{{background:#0F4C8F;color:white;border:none;padding:6px 12px;border-radius:5px;cursor:pointer;text-decoration:none}}</style></head><body><h2>PENDENTES - {sup_filtro} - {len(pendentes)}</h2><div class='card'><a href='/base?supervisor={sup_filtro}' class='btn'>Voltar BASE</a> <a href='/base' class='btn' style='background:#666'>Limpar filtro</a></div><div class='card' style='overflow:auto'><table><tr><th>CHAPA</th><th>NOME</th><th>CARGO</th><th>JUSTIFICAR</th></tr>{linhas or '<tr><td colspan=4>Nenhum pendente - todos feitos!</td></tr>'}</table></div></body></html>"
+
+@app_flask.route('/base/justificar', methods=['POST'])
+def base_justificar():
+    chapa = str(request.form.get('chapa','')).zfill(6)
+    motivo = request.form.get('motivo','').strip()
+    sup_ret = request.form.get('supervisor','')
+    dados = FUNCIONARIOS.get(chapa, {})
+    with open(ARQ_JUST, "a", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow([datetime.datetime.now().strftime("%d/%m/%Y %H:%M"), chapa, dados.get('nome',''), dados.get('supervisor',''), dados.get('coordenador',''), motivo])
+    return f"<script>alert('Chapa {chapa} justificada!');window.location='/base/pendentes?supervisor={sup_ret}';</script>"
 
 @app_flask.route('/admin')
 def admin_panel():
@@ -285,15 +355,14 @@ def admin_liberar():
     senha = request.args.get('senha','')
     if senha != ADMIN_SENHA: return "Senha inválida"
     chapa = str(request.args.get('chapa','')).zfill(6)
-    for arq, fields in [(ARQ_INS, ["data","chapa","nome","cargo","supervisor","coordenador","telefone","eh_motorista","item","tamanho","data_fab","validade","status"])]:
-        novas=[]
-        try:
-            with open(arq, encoding="utf-8") as f:
-                for r in csv.DictReader(f):
-                    if str(r.get('chapa','')).zfill(6)!=chapa: novas.append(r)
-            with open(arq, "w", newline="", encoding="utf-8") as f:
-                w=csv.DictWriter(f, fieldnames=fields); w.writeheader(); w.writerows(novas)
-        except: pass
+    novas=[]
+    try:
+        with open(ARQ_INS, encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                if str(r.get('chapa','')).zfill(6)!=chapa: novas.append(r)
+        with open(ARQ_INS, "w", newline="", encoding="utf-8") as f:
+            w=csv.DictWriter(f, fieldnames=["data","chapa","nome","cargo","supervisor","coordenador","telefone","eh_motorista","item","tamanho","data_fab","validade","status"]); w.writeheader(); w.writerows(novas)
+    except: pass
     return f"<script>alert('Liberada {chapa}');window.location='/admin?senha={ADMIN_SENHA}';</script>"
 
 @app_flask.route('/graficos')
@@ -520,7 +589,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     kb = ReplyKeyboardMarkup([[KeyboardButton("/start - Nova Inspeção")]], resize_keyboard=True)
     await update.message.reply_text("Cancelado! /start", reply_markup=kb); return ConversationHandler.END
 
-# ===== WEBHOOK - CORREÇÃO DEFINITIVA LOOP =====
+# ===== WEBHOOK LOOP FIX =====
 application = None
 BOT_LOOP = None
 
@@ -544,11 +613,9 @@ def start_bot_loop(loop):
 
 def run_flask():
     global application, BOT_LOOP
-    
     BOT_LOOP = asyncio.new_event_loop()
     t = threading.Thread(target=start_bot_loop, args=(BOT_LOOP,), daemon=True)
     t.start()
-
     async def init_bot():
         global application
         application = Application.builder().token(TOKEN).build()
@@ -571,11 +638,9 @@ def run_flask():
         await application.initialize()
         await application.start()
         await application.bot.set_webhook(f"{WEBHOOK_URL}/webhook", drop_pending_updates=True)
-        print(f"✅ WEBHOOK SETADO: {WEBHOOK_URL}/webhook - LOOP FIX OK")
-
+        print(f"✅ WEBHOOK SETADO: {WEBHOOK_URL}/webhook - LOOP FIX + BASE FIX")
     fut = asyncio.run_coroutine_threadsafe(init_bot(), BOT_LOOP)
     fut.result(timeout=30)
-    
     app_flask.run(host='0.0.0.0', port=int(os.environ.get("PORT",10000)))
 
 def main():
