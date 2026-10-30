@@ -1,390 +1,294 @@
 import os
 import logging
+from io import BytesIO
+from datetime import datetime
+import pandas as pd
+import matplotlib.pyplot as plt
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from datetime import datetime
-import matplotlib
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import pandas as pd
-from io import BytesIO
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from dotenv import load_dotenv
+from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 
-# ========= CONFIG =========
-TOKEN = os.getenv("BOT_TOKEN")
-DATABASE_URL = os.getenv("DATABASE_URL")
-ADMIN_CHAPAS = ["062289", "065432"] # coloque sua chapa aqui
-
+load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ESTADOS
-CHAPA, PERGUNTAS, CAD_CHAPA, CAD_NOME, CAD_CARGO, CAD_SUP, CAD_COORD = range(7)
+TOKEN = os.getenv("BOT_TOKEN")
+DATABASE_URL = os.getenv("DATABASE_URL")
 
+# ========= 35 PERGUNTAS =========
 PERGUNTAS_LISTA = [
-    "1 - Uniforme limpo e completo?", "2 - EPI adequado à atividade?", "3 - Cinto de segurança?", "4 - Calçado de segurança?",
-    "5 - Luvas em bom estado?", "6 - Capacete com jugular?", "7 - Óculos de proteção?", "8 - Protetor auricular?",
-    "9 - Máscara / Respirador?", "10 - Ferramentas em bom estado?", "11 - Organização do local?", "12 - Sinalização de segurança?",
-    "13 - Extintor de incêndio próximo?", "14 - Kit primeiros socorros?", "15 - Iluminação adequada?", "16 - Ventilação?",
-    "17 - Ruído controlado?", "18 - Postura ergonômica?", "19 - Hidratação disponível?", "20 - Pausas previstas?",
-    "21 - Treinamento em dia?", "22 - ASO válido?", "23 - Integração realizada?", "24 - DDS realizado hoje?",
-    "25 - PT emitida?", "26 - APR preenchida?", "27 - Bloqueio e etiquetagem?", "28 - Trabalho em altura liberado?",
-    "29 - Espaço confinado liberado?", "30 - Risco elétrico controlado?", "31 - Produtos químicos identificados?",
-    "32 - Proteção de máquinas?", "33 - Veículos e equipamentos inspecionados?", "34 - Casa de força organizada?",
-    "35 - Observações finais / Comportamento seguro?"
+"1-Uniforme", "2-EPI adequado", "3-EPI em bom estado", "4-Capacete", "5-Capacete com jugular",
+"6-Óculos de segurança", "7-Luva", "8-Bota", "9-Cinto de segurança", "10-Talabarte",
+"11-Organização do local", "12-Sinalização", "13-Ferramentas", "14-Ferramentas em bom estado",
+"15-Escada", "16-Andaime", "17-Trabalho em altura", "18-PT liberada", "19-Análise de risco",
+"20-Conhecimento da atividade", "21-Comunicação", "22-Hidratação", "23-Descanso",
+"24-Alimentação", "25-Transporte", "26-Celular", "27-Fumo", "28-Álcool/Drogas",
+"29-Postura", "30-Movimentação manual", "31-Ruído", "32-Iluminação", "33-Ventilação",
+"34-Limpeza", "35-Descarte de resíduos"
 ]
 
+# ESTADOS CONVERSA
+CHAPA, NOME, CARGO, SUPERVISOR, COORDENADOR, PERGUNTAS = range(6)
+
 def get_conn():
-    return psycopg2.connect(DATABASE_URL, sslmode='require')
+    return psycopg2.connect(DATABASE_URL)
 
-def init_db():
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS cadastros (
-                chapa TEXT PRIMARY KEY,
-                nome TEXT NOT NULL,
-                cargo TEXT,
-                supervisor TEXT,
-                coordenador TEXT,
-                data_cadastro TIMESTAMP DEFAULT NOW()
-            );
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS inspecoes (
-                id SERIAL PRIMARY KEY,
-                data TIMESTAMP DEFAULT NOW(),
-                chapa TEXT,
-                nome TEXT,
-                cargo TEXT,
-                supervisor TEXT,
-                coordenador TEXT,
-                p1 TEXT, p2 TEXT, p3 TEXT, p4 TEXT, p5 TEXT, p6 TEXT, p7 TEXT, p8 TEXT, p9 TEXT, p10 TEXT,
-                p11 TEXT, p12 TEXT, p13 TEXT, p14 TEXT, p15 TEXT, p16 TEXT, p17 TEXT, p18 TEXT, p19 TEXT, p20 TEXT,
-                p21 TEXT, p22 TEXT, p23 TEXT, p24 TEXT, p25 TEXT, p26 TEXT, p27 TEXT, p28 TEXT, p29 TEXT, p30 TEXT,
-                p31 TEXT, p32 TEXT, p33 TEXT, p34 TEXT, p35 TEXT
-            );
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS justificativas (
-                id SERIAL PRIMARY KEY,
-                data TIMESTAMP DEFAULT NOW(),
-                chapa TEXT,
-                nome TEXT,
-                justificativa TEXT
-            );
-        """)
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS pedidos_mascaras (
-                id SERIAL PRIMARY KEY,
-                data TIMESTAMP DEFAULT NOW(),
-                chapa TEXT,
-                nome TEXT,
-                qtd INTEGER
-            );
-        """)
-        conn.commit()
-        cur.close()
-        conn.close()
-        print("Supabase OK!")
-        logger.info("Supabase OK!")
-    except Exception as e:
-        print(f"Erro Supabase init: {e}")
-        logger.error(f"Erro Supabase init: {e}")
+# ========= FILTRO BASE =========
+def montar_filtro_base(args_text):
+    where = []
+    params = []
+    if not args_text:
+        return "", []
+    txt_lower = args_text.lower()
+    txt_upper = args_text.upper()
 
-# ========= START E INSPECAO =========
+    if "chapa" in txt_lower:
+        try:
+            chapa = txt_lower.split("chapa")[1].strip().split()[0]
+            where.append("chapa = %s")
+            params.append(chapa)
+        except: pass
+
+    if "supervisor" in txt_lower:
+        try:
+            # pega tudo depois de supervisor até coordenador/chapa/data
+            parte = txt_lower.split("supervisor")[1]
+            for sep in ["coordenador", "chapa", "data", "hoje", "ontem", "semana"]:
+                if sep in parte:
+                    parte = parte.split(sep)[0]
+            sup = parte.strip().upper()
+            if sup:
+                where.append("supervisor ILIKE %s")
+                params.append(f"%{sup}%")
+        except: pass
+
+    if "coordenador" in txt_lower:
+        try:
+            parte = txt_lower.split("coordenador")[1]
+            for sep in ["supervisor", "chapa", "data", "hoje", "ontem", "semana"]:
+                if sep in parte:
+                    parte = parte.split(sep)[0]
+            coord = parte.strip().upper()
+            if coord:
+                where.append("coordenador ILIKE %s")
+                params.append(f"%{coord}%")
+        except: pass
+
+    if "HOJE" in txt_upper:
+        where.append("DATE(data) = CURRENT_DATE")
+    elif "ONTEM" in txt_upper:
+        where.append("DATE(data) = CURRENT_DATE - 1")
+    elif "SEMANA" in txt_upper:
+        where.append("data >= CURRENT_DATE - INTERVAL '7 days'")
+
+    where_sql = " WHERE " + " AND ".join(where) if where else ""
+    return where_sql, params
+
+# ========= START INSPECAO =========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.clear()
-    await update.message.reply_text("🔍 *Bot SESMT Telemont*\n\nDigite sua chapa:", parse_mode='Markdown', reply_markup=ReplyKeyboardRemove())
+    context.user_data['respostas'] = {}
+    await update.message.reply_text("🔧 *TELE MONT - Inspeção*\n\nDigite a CHAPA:", parse_mode='Markdown')
     return CHAPA
 
-async def receber_chapa(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chapa = update.message.text.strip()
-    context.user_data['chapa'] = chapa
-    try:
-        conn = get_conn()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT * FROM cadastros WHERE chapa = %s", (chapa,))
-        cad = cur.fetchone()
-        cur.close()
-        conn.close()
-        if not cad:
-            await update.message.reply_text(f"❌ Chapa {chapa} não cadastrada.\n\nFale com o SESMT ou use /cadastrar (admin).")
-            return ConversationHandler.END
-        
-        context.user_data['cadastro'] = cad
-        context.user_data['respostas'] = []
-        context.user_data['inicio'] = datetime.now()
-        
-        await update.message.reply_text(
-            f"👷 *{cad['nome']}*\nCargo: {cad['cargo']}\n\nVamos começar a inspeção.\n\n*1/35* - {PERGUNTAS_LISTA[0]}",
-            parse_mode='Markdown',
-            reply_markup=ReplyKeyboardMarkup([["OK", "NÃO OK", "N/A"]], one_time_keyboard=True, resize_keyboard=True)
-        )
-        return PERGUNTAS
-    except Exception as e:
-        logger.error(e)
-        await update.message.reply_text(f"Erro ao buscar chapa: {e}")
-        return ConversationHandler.END
+async def chapa_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['chapa'] = update.message.text.strip()
+    await update.message.reply_text("Nome do colaborador:")
+    return NOME
 
-async def receber_perguntas(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    texto = update.message.text.strip().upper()
-    if texto not in ["OK", "NÃO OK", "NAO OK", "N/A", "NA"]:
-        texto = update.message.text.strip()
-        if "NAO" in texto.upper():
-            texto = "NÃO OK"
-    
-    if texto == "NAO OK":
-        texto = "NÃO OK"
-    if texto == "NA":
-        texto = "N/A"
-        
-    context.user_data['respostas'].append(texto)
-    idx = len(context.user_data['respostas'])
-    
+async def nome_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['nome'] = update.message.text.strip().upper()
+    await update.message.reply_text("Cargo:")
+    return CARGO
+
+async def cargo_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['cargo'] = update.message.text.strip().upper()
+    await update.message.reply_text("Supervisor:")
+    return SUPERVISOR
+
+async def supervisor_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['supervisor'] = update.message.text.strip().upper()
+    await update.message.reply_text("Coordenador:")
+    return COORDENADOR
+
+async def coordenador_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['coordenador'] = update.message.text.strip().upper()
+    context.user_data['pergunta_idx'] = 0
+    await update.message.reply_text(f"Vamos começar (35 perguntas):\n\n*1 - {PERGUNTAS_LISTA[0]}*\nResponda: OK / NÃO OK / N/A", parse_mode='Markdown')
+    return PERGUNTAS
+
+async def perguntas_step(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    idx = context.user_data['pergunta_idx']
+    resposta = update.message.text.strip().upper().replace("NAO OK","NÃO OK")
+    if resposta not in ["OK","NÃO OK","N/A","NA"]:
+        await update.message.reply_text("Responda apenas: OK / NÃO OK / N/A")
+        return PERGUNTAS
+
+    if resposta == "NA": resposta = "N/A"
+    context.user_data['respostas'][f'p{idx+1}'] = resposta
+    idx += 1
+    context.user_data['pergunta_idx'] = idx
+
     if idx < 35:
-        await update.message.reply_text(
-            f"*{idx+1}/35* - {PERGUNTAS_LISTA[idx]}",
-            parse_mode='Markdown',
-            reply_markup=ReplyKeyboardMarkup([["OK", "NÃO OK", "N/A"]], one_time_keyboard=True, resize_keyboard=True)
-        )
+        await update.message.reply_text(f"*{idx+1} - {PERGUNTAS_LISTA[idx]}*\nOK / NÃO OK / N/A", parse_mode='Markdown')
         return PERGUNTAS
     else:
-        # SALVA 1 LINHA SÓ - CORREÇÃO PRINCIPAL
+        # SALVAR - CORRIGIDO SEM DUPLICAR
         try:
-            cad = context.user_data['cadastro']
-            respostas = context.user_data['respostas']
-            chapa = context.user_data['chapa']
-            
             conn = get_conn()
             cur = conn.cursor()
-            cur.execute("""
-                INSERT INTO inspecoes (chapa, nome, cargo, supervisor, coordenador,
-                p1,p2,p3,p4,p5,p6,p7,p8,p9,p10,p11,p12,p13,p14,p15,p16,p17,p18,p19,p20,p21,p22,p23,p24,p25,p26,p27,p28,p29,p30,p31,p32,p33,p34,p35)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            """, (chapa, cad['nome'], cad['cargo'], cad['supervisor'], cad['coordenador'], *respostas))
+            cols = ", ".join([f"p{i}" for i in range(1,36)])
+            vals = ", ".join(["%s"]*35)
+            resp_list = [context.user_data['respostas'][f'p{i}'] for i in range(1,36)]
+            
+            sql = f"INSERT INTO inspecoes (chapa, nome, cargo, supervisor, coordenador, data, {cols}) VALUES (%s,%s,%s,%s,%s,NOW(),{vals})"
+            cur.execute(sql, [context.user_data['chapa'], context.user_data['nome'], context.user_data['cargo'], context.user_data['supervisor'], context.user_data['coordenador']] + resp_list)
             conn.commit()
             cur.close()
             conn.close()
-            
-            tempo = (datetime.now() - context.user_data['inicio']).seconds
-            await update.message.reply_text(
-                f"✅ *Inspeção salva com sucesso!*\n\n👷 {cad['nome']}\n⏱️ Tempo: {tempo}s\n💾 1 linha salva no Supabase (não apaga mais no restart)\n\nUse:\n/base - ver total\n/graficos - ver análise\n/excel - baixar planilha",
-                parse_mode='Markdown',
-                reply_markup=ReplyKeyboardRemove()
-            )
+            await update.message.reply_text("✅ Inspeção salva com sucesso! Use /base /graficos /naoconforme")
         except Exception as e:
-            logger.error(f"Erro ao salvar: {e}")
-            await update.message.reply_text(f"❌ Erro ao salvar: {e}", reply_markup=ReplyKeyboardRemove())
-        
+            logger.error(e)
+            await update.message.reply_text(f"Erro ao salvar: {e}")
         return ConversationHandler.END
 
-# ========= COMANDOS BASE, GRAFICOS, EXCEL =========
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Cancelado.")
+    return ConversationHandler.END
+
+# ========= BASE COM FILTROS =========
 async def base(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        args_text = " ".join(context.args) if context.args else ""
+        where_sql, params = montar_filtro_base(args_text)
         conn = get_conn()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        cur.execute("SELECT COUNT(*) as total, COUNT(DISTINCT chapa) as pessoas FROM inspecoes")
+        cur.execute(f"SELECT COUNT(*) as total, COUNT(DISTINCT chapa) as pessoas FROM inspecoes {where_sql}", params)
         info = cur.fetchone()
-        cur.execute("SELECT chapa, nome, cargo, COUNT(*) as qtd, MAX(data) as ultima FROM inspecoes GROUP BY chapa, nome, cargo ORDER BY qtd DESC LIMIT 15")
-        top = cur.fetchall()
-        cur.close()
-        conn.close()
-        
         if info['total'] == 0:
-            await update.message.reply_text("📊 Base vazia. Faça uma inspeção com /start")
-            return
-
-        msg = f"📊 *BASE SUPABASE - TELE MONT*\n\nTotal inspeções: *{info['total']}*\nPessoas diferentes: *{info['pessoas']}*\n\n*Top Inspetores:*\n"
+            await update.message.reply_text(f"📊 Nenhum dado com filtro: {args_text}\nEx: /base supervisor LUCAS")
+            cur.close(); conn.close(); return
+        cur.execute(f"SELECT chapa, nome, supervisor, COUNT(*) as qtd FROM inspecoes {where_sql} GROUP BY chapa, nome, supervisor ORDER BY qtd DESC LIMIT 10", params)
+        top = cur.fetchall()
+        cur.close(); conn.close()
+        msg = f"📊 *BASE - TELE MONT*\nFiltro: `{args_text if args_text else 'GERAL'}`\nTotal: *{info['total']}* | Pessoas: *{info['pessoas']}*\n\n*Top:*\n"
         for t in top:
-            msg += f"{t['chapa']} - {t['nome'][:20]}: {t['qtd']}\n"
-        msg += "\nComandos:\n/graficos - Análise detalhada\n/excel - Baixar Excel"
+            msg += f"{t['chapa']} - {t['nome'][:15]} ({t['supervisor'][:10]}): {t['qtd']}\n"
+        msg += "\nFiltros: /base supervisor NOME /base coordenador NOME /base hoje"
         await update.message.reply_text(msg, parse_mode='Markdown')
     except Exception as e:
         await update.message.reply_text(f"Erro base: {e}")
 
+# ========= GRAFICOS COM FILTROS =========
 async def graficos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("📊 Gerando gráficos... aguarde")
+    await update.message.reply_text("📊 Gerando gráficos...")
     try:
+        args_text = " ".join(context.args) if context.args else ""
+        where_sql, params = montar_filtro_base(args_text)
         conn = get_conn()
-        df = pd.read_sql("SELECT * FROM inspecoes ORDER BY data DESC", conn)
+        df = pd.read_sql(f"SELECT * FROM inspecoes {where_sql}", conn, params=params)
         conn.close()
-        
         if df.empty:
-            await update.message.reply_text("Nenhuma inspeção ainda. Use /start")
-            return
-
+            await update.message.reply_text("Sem dados com esse filtro"); return
         cols = [f'p{i}' for i in range(1,36)]
-        todos_valores = []
+        todos = []
         for c in cols:
             if c in df.columns:
-                todos_valores.extend(df[c].dropna().astype(str).tolist())
-        
-        # Normaliza
-        todos_valores = [v.upper().strip() for v in todos_valores]
-        todos_valores = ["NÃO OK" if "NAO" in v else v for v in todos_valores]
-        todos_valores = ["N/A" if v == "NA" else v for v in todos_valores]
-        
-        ok = todos_valores.count('OK')
-        nok = todos_valores.count('NÃO OK')
-        na = todos_valores.count('N/A')
-        total_itens = len(todos_valores)
-
-        # GRAFICO 1 - PIZZA GERAL
+                todos.extend(df[c].dropna().astype(str).tolist())
+        todos = [v.upper().replace("NAO OK","NÃO OK") for v in todos]
+        ok = todos.count('OK'); nok = todos.count('NÃO OK'); na = todos.count('N/A')
         plt.figure(figsize=(7,5))
-        cores = ['#2ecc71', '#e74c3c', '#95a5a6']
-        plt.pie([ok, nok, na], labels=[f'OK ({ok})', f'NÃO OK ({nok})', f'N/A ({na})'], autopct='%1.1f%%', colors=cores, startangle=90)
-        plt.title(f'ANÁLISE GERAL - TELE MONT\n{len(df)} inspeções | {total_itens} itens avaliados', fontsize=11, fontweight='bold')
-        buf = BytesIO()
-        plt.savefig(buf, format='png', dpi=150, bbox_inches='tight')
-        buf.seek(0)
-        plt.close()
-        await update.message.reply_photo(photo=buf, caption=f"📊 GERAL: OK={ok} | NÃO OK={nok} | N/A={na} | Taxa conformidade: {ok/total_itens*100:.1f}%")
-
-        # GRAFICO 2 - TOP 10 PIORES ITENS
-        problemas = {}
-        for i, col in enumerate(cols):
-            if col in df.columns:
-                count_nok = (df[col].astype(str).str.upper().str.contains('NÃO OK|NAO OK')).sum()
-                problemas[PERGUNTAS_LISTA[i]] = count_nok
-        
-        piores = sorted(problemas.items(), key=lambda x: x[1], reverse=True)[:10]
-        if piores and piores[0][1] > 0:
-            nomes, valores = zip(*piores)
-            plt.figure(figsize=(10,6))
-            plt.barh(nomes[::-1], valores[::-1], color='#e74c3c')
-            plt.xlabel('Qtd de NÃO OK')
-            plt.title('TOP 10 ITENS COM MAIS NÃO OK - PONTOS CRÍTICOS', fontweight='bold')
-            plt.tight_layout()
-            buf2 = BytesIO()
-            plt.savefig(buf2, format='png', dpi=150, bbox_inches='tight')
-            buf2.seek(0)
-            plt.close()
-            await update.message.reply_photo(photo=buf2, caption="🚨 Itens críticos que precisam de ação")
-
-        # GRAFICO 3 - EVOLUÇÃO POR DIA
-        if len(df) > 1:
-            df['data_dia'] = pd.to_datetime(df['data']).dt.date
-            evol = df.groupby('data_dia').size()
-            plt.figure(figsize=(8,4))
-            plt.plot(evol.index.astype(str), evol.values, marker='o', color='#3498db', linewidth=2)
-            plt.xticks(rotation=45)
-            plt.ylabel('Inspeções')
-            plt.title('Evolução de Inspeções por Dia')
-            plt.tight_layout()
-            buf3 = BytesIO()
-            plt.savefig(buf3, format='png', dpi=150, bbox_inches='tight')
-            buf3.seek(0)
-            plt.close()
-            await update.message.reply_photo(photo=buf3, caption="📈 Evolução diária")
-
-        await update.message.reply_text("✅ Gráficos finalizados! Use /excel para baixar planilha completa.")
-
+        plt.pie([ok, nok, na], labels=[f'OK {ok}', f'NÃO OK {nok}', f'N/A {na}'], autopct='%1.1f%%', colors=['#2ecc71','#e74c3c','#95a5a6'])
+        plt.title(f'CONFORMIDADE - {args_text.upper() if args_text else "GERAL"} - {len(df)} insp.')
+        buf = BytesIO(); plt.savefig(buf, format='png', dpi=150, bbox_inches='tight'); buf.seek(0); plt.close()
+        await update.message.reply_photo(photo=buf, caption=f"OK={ok} | NOK={nok} | {ok/(ok+nok)*100 if ok+nok else 0:.1f}% OK - Filtro: {args_text if args_text else 'GERAL'}")
     except Exception as e:
-        logger.error(f"Erro graficos: {e}")
-        await update.message.reply_text(f"❌ Erro nos gráficos: {e}\n\nSe ainda tiver linhas duplicadas antigas (35 linhas por inspeção), apague tudo no Supabase > inspecoes > Delete all e faça 1 inspeção nova teste.")
+        await update.message.reply_text(f"Erro graficos: {e}")
 
-async def excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ========= NAO CONFORME COM % =========
+async def naoconforme(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        args_text = " ".join(context.args) if context.args else ""
+        where_sql, params = montar_filtro_base(args_text)
         conn = get_conn()
-        df = pd.read_sql("SELECT * FROM inspecoes ORDER BY data DESC", conn)
+        df = pd.read_sql(f"SELECT * FROM inspecoes {where_sql}", conn, params=params)
         conn.close()
         if df.empty:
-            await update.message.reply_text("Base vazia.")
-            return
-        buf = BytesIO()
-        df.to_excel(buf, index=False, engine='openpyxl')
-        buf.seek(0)
-        await update.message.reply_document(document=buf, filename=f"TELEMONT_inspecoes_{datetime.now().strftime('%d-%m-%Y')}.xlsx", caption=f"📊 {len(df)} inspeções exportadas")
+            await update.message.reply_text(f"📊 Nenhuma inspeção com filtro: {args_text}\nEx: /naoconforme supervisor LUCAS"); return
+
+        cols = [f'p{i}' for i in range(1,36)]
+        lista = []
+        for i, col in enumerate(cols):
+            if col in df.columns:
+                qtd = (df[col].astype(str).str.upper().str.contains('NÃO OK|NAO OK')).sum()
+                lista.append({"ITEM": PERGUNTAS_LISTA[i], "QTD_NAO_OK": int(qtd)})
+        
+        df_lista = pd.DataFrame(lista)
+        df_lista = df_lista[df_lista['QTD_NAO_OK'] > 0].sort_values('QTD_NAO_OK', ascending=False)
+        total_nc = int(df_lista['QTD_NAO_OK'].sum()) if not df_lista.empty else 0
+        if df_lista.empty:
+            await update.message.reply_text(f"✅ Nenhum NÃO CONFORME - Tudo OK! Filtro: {args_text if args_text else 'GERAL'}"); return
+
+        df_lista['%_DO_TOTAL_NC'] = (df_lista['QTD_NAO_OK'] / total_nc * 100).round(1)
+        df_lista['%_REPROVACAO'] = (df_lista['QTD_NAO_OK'] / len(df) * 100).round(1)
+
+        msg = f"🚨 *NÃO CONFORMES - SOMATÓRIO*\nFiltro: `{args_text if args_text else 'GERAL'}`\nInsp: *{len(df)}* | Total NC: *{total_nc}*\n\n"
+        for _, row in df_lista.iterrows():
+            msg += f"{row['ITEM']}: *{row['QTD_NAO_OK']}x* ({row['%_DO_TOTAL_NC']}% do NC | {row['%_REPROVACAO']}% reprova)\n"
+        if len(msg) > 3500: msg = msg[:3500] + "\n... completo no Excel"
+        await update.message.reply_text(msg, parse_mode='Markdown')
+
+        plt.figure(figsize=(11, max(5, len(df_lista)*0.5)))
+        plt.barh(df_lista['ITEM'][::-1].str[:35], df_lista['QTD_NAO_OK'][::-1], color='#e74c3c')
+        for i, (qtd, perc) in enumerate(zip(df_lista['QTD_NAO_OK'][::-1], df_lista['%_DO_TOTAL_NC'][::-1])):
+            plt.text(qtd + 0.2, i, f"{qtd}x ({perc}%)", va='center', fontsize=9, fontweight='bold')
+        plt.title(f'NÃO CONFORMES - {args_text.upper() if args_text else "GERAL"} - {len(df)} insp | {total_nc} NC', fontweight='bold')
+        plt.tight_layout()
+        buf = BytesIO(); plt.savefig(buf, format='png', dpi=150, bbox_inches='tight'); buf.seek(0); plt.close()
+        await update.message.reply_photo(photo=buf, caption=f"Filtro: {args_text if args_text else 'GERAL'} | Total NC: {total_nc}")
+
+        buf_excel = BytesIO()
+        df_lista.to_excel(buf_excel, index=False)
+        buf_excel.seek(0)
+        nome_arq = f"NC_{args_text.replace(' ','_') if args_text else 'GERAL'}_{datetime.now().strftime('%d-%m')}.xlsx"
+        await update.message.reply_document(document=buf_excel, filename=nome_arq, caption=f"📥 Excel: {args_text if args_text else 'GERAL'}")
+
+    except Exception as e:
+        logger.error(e); await update.message.reply_text(f"Erro: {e}")
+
+async def excel_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        args_text = " ".join(context.args) if context.args else ""
+        where_sql, params = montar_filtro_base(args_text)
+        conn = get_conn()
+        df = pd.read_sql(f"SELECT * FROM inspecoes {where_sql} ORDER BY data DESC", conn, params=params)
+        conn.close()
+        buf = BytesIO(); df.to_excel(buf, index=False); buf.seek(0)
+        await update.message.reply_document(document=buf, filename=f"BASE_{args_text if args_text else 'GERAL'}.xlsx")
     except Exception as e:
         await update.message.reply_text(f"Erro excel: {e}")
 
-async def cadastrar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chapa_user = str(update.effective_user.id)
-    # Simplificado: libera para todos por enquanto
-    await update.message.reply_text("📝 Cadastro de chapa - Digite a chapa:")
-    return CAD_CHAPA
-
-async def cad_chapa(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['nova_chapa'] = update.message.text.strip()
-    await update.message.reply_text("Nome completo:")
-    return CAD_NOME
-
-async def cad_nome(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['novo_nome'] = update.message.text.strip()
-    await update.message.reply_text("Cargo:")
-    return CAD_CARGO
-
-async def cad_cargo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['novo_cargo'] = update.message.text.strip()
-    await update.message.reply_text("Supervisor:")
-    return CAD_SUP
-
-async def cad_sup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['novo_sup'] = update.message.text.strip()
-    await update.message.reply_text("Coordenador:")
-    return CAD_COORD
-
-async def cad_coord(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        conn = get_conn()
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO cadastros (chapa, nome, cargo, supervisor, coordenador)
-            VALUES (%s,%s,%s,%s,%s)
-            ON CONFLICT (chapa) DO UPDATE SET nome=%s, cargo=%s, supervisor=%s, coordenador=%s
-        """, (
-            context.user_data['nova_chapa'], context.user_data['novo_nome'], context.user_data['novo_cargo'],
-            context.user_data['novo_sup'], update.message.text.strip(),
-            context.user_data['novo_nome'], context.user_data['novo_cargo'], context.user_data['novo_sup'], update.message.text.strip()
-        ))
-        conn.commit()
-        cur.close()
-        conn.close()
-        await update.message.reply_text(f"✅ Chapa {context.user_data['nova_chapa']} cadastrada!")
-    except Exception as e:
-        await update.message.reply_text(f"Erro cadastro: {e}")
-    return ConversationHandler.END
-
-async def cancelar(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Cancelado.", reply_markup=ReplyKeyboardRemove())
-    return ConversationHandler.END
-
 def main():
-    init_db()
     app = Application.builder().token(TOKEN).build()
-    
-    conv_inspecao = ConversationHandler(
+    conv = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
-            CHAPA: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_chapa)],
-            PERGUNTAS: [MessageHandler(filters.TEXT & ~filters.COMMAND, receber_perguntas)],
+            CHAPA: [MessageHandler(filters.TEXT & ~filters.COMMAND, chapa_step)],
+            NOME: [MessageHandler(filters.TEXT & ~filters.COMMAND, nome_step)],
+            CARGO: [MessageHandler(filters.TEXT & ~filters.COMMAND, cargo_step)],
+            SUPERVISOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, supervisor_step)],
+            COORDENADOR: [MessageHandler(filters.TEXT & ~filters.COMMAND, coordenador_step)],
+            PERGUNTAS: [MessageHandler(filters.TEXT & ~filters.COMMAND, perguntas_step)],
         },
-        fallbacks=[CommandHandler("cancelar", cancelar)]
+        fallbacks=[CommandHandler("cancel", cancel)],
     )
-    
-    conv_cad = ConversationHandler(
-        entry_points=[CommandHandler("cadastrar", cadastrar)],
-        states={
-            CAD_CHAPA: [MessageHandler(filters.TEXT & ~filters.COMMAND, cad_chapa)],
-            CAD_NOME: [MessageHandler(filters.TEXT & ~filters.COMMAND, cad_nome)],
-            CAD_CARGO: [MessageHandler(filters.TEXT & ~filters.COMMAND, cad_cargo)],
-            CAD_SUP: [MessageHandler(filters.TEXT & ~filters.COMMAND, cad_sup)],
-            CAD_COORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, cad_coord)],
-        },
-        fallbacks=[CommandHandler("cancelar", cancelar)]
-    )
-    
-    app.add_handler(conv_inspecao)
-    app.add_handler(conv_cad)
+    app.add_handler(conv)
     app.add_handler(CommandHandler("base", base))
     app.add_handler(CommandHandler("graficos", graficos))
-    app.add_handler(CommandHandler("excel", excel))
-    app.add_handler(CommandHandler("cancelar", cancelar))
-    
-    print("Bot Telemont rodando com Supabase...")
+    app.add_handler(CommandHandler("naoconforme", naoconforme))
+    app.add_handler(CommandHandler("excel", excel_cmd))
+    print("Bot rodando... Supabase OK!")
     app.run_polling()
 
 if __name__ == "__main__":
