@@ -1,6 +1,6 @@
-import os, threading, csv, datetime, re, uuid, json, unicodedata, asyncio
+import os, threading, csv, datetime, re, uuid, json, unicodedata, asyncio, io
 from collections import Counter, defaultdict
-from flask import Flask, send_from_directory, request, send_file, redirect
+from flask import Flask, send_from_directory, request, Response
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, ConversationHandler, filters, ContextTypes
 
@@ -241,12 +241,11 @@ def home(): return f"BOT SESMT ON - <a href='/base'>BASE</a> | <a href='/grafico
 @app_flask.route('/mascaras/<path:filename>')
 def masc(filename): return send_from_directory(PASTA_MASC, filename)
 
-# ===== BASE CORRIGIDO + CLIQUE PEND =====
+# ===== BASE COM FILTRO + PEND CLICAVEL + EXPORTAR =====
 @app_flask.route('/base')
 def base():
     filtro_sup = request.args.get('supervisor','').strip().upper()
     filtro_coord = request.args.get('coordenador','').strip().upper()
-
     feitos = set()
     try:
         with open(ARQ_INS, encoding="utf-8") as f:
@@ -254,14 +253,11 @@ def base():
                 feitos.add(str(r.get('chapa','')).zfill(6))
     except: pass
     justificados = get_justificados()
-
-    # LISTA UNICA - CORREÇÃO DO FILTRO VAZIO
     chapas_unicas = {}
     for k, v in FUNCIONARIOS.items():
         ck = str(k).zfill(6)
         if len(ck)==6 and ck not in chapas_unicas:
             chapas_unicas[ck]=v
-
     filtradas = {}
     for ch6, dados in chapas_unicas.items():
         sup = str(dados.get('supervisor','')).upper()
@@ -269,17 +265,14 @@ def base():
         if filtro_sup and filtro_sup not in sup: continue
         if filtro_coord and filtro_coord not in coord: continue
         filtradas[ch6]=dados
-
     por_supervisor = defaultdict(list)
     for ch6, dados in filtradas.items():
         sup = dados.get('supervisor','SEM SUPERVISOR') or 'SEM SUPERVISOR'
         por_supervisor[sup].append({'chapa':ch6, 'dados':dados})
-
     todos_sup = sorted(SUPERVISORES_LISTA)
     todos_coord = sorted(COORDENADORES_LISTA)
     opt_sup = "<option value=''>-- TODOS --</option>" + "".join([f"<option value='{s}' {'selected' if s==filtro_sup else ''}>{s}</option>" for s in todos_sup])
     opt_coord = "<option value=''>-- TODOS --</option>" + "".join([f"<option value='{c}' {'selected' if c==filtro_coord else ''}>{c}</option>" for c in todos_coord])
-
     linhas_html = ""
     for sup, lista in sorted(por_supervisor.items()):
         total=len(lista)
@@ -290,25 +283,22 @@ def base():
         cor="green" if perc>=100 else "orange" if perc>=50 else "red"
         link_pend = f"/base/pendentes?supervisor={sup}" if pend>0 else "#"
         linhas_html+=f"<tr><td>{sup}</td><td style='text-align:center'>{total}</td><td style='text-align:center'>{feitos_sup}</td><td style='text-align:center'>{just_sup}</td><td style='text-align:center'><a href='{link_pend}' style='background:#0F4C8F;color:white;padding:4px 10px;border-radius:10px;text-decoration:none;font-weight:bold'>{pend}</a></td><td style='text-align:center;background:{cor};color:white'>{perc}%</td></tr>"
-
     if not linhas_html:
-        linhas_html = "<tr><td colspan=6 style='text-align:center;padding:20px'>Nenhum supervisor encontrado. Clique em Limpar.</td></tr>"
-
-    html = f"""
+        linhas_html = "<tr><td colspan=6 style='text-align:center;padding:20px'>Nenhum encontrado. Clique Limpar.</td></tr>"
+    return f"""
     <html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>BASE</title>
-    <style>body{{font-family:Arial;padding:15px;background:#f0f2f5}} .card{{background:white;padding:15px;border-radius:10px;margin-bottom:20px}} table{{width:100%;border-collapse:collapse;background:white;font-size:13px}} th,td{{border:1px solid #ddd;padding:8px}} th{{background:#0F4C8F;color:white}} .btn{{padding:8px 14px;border-radius:5px;color:white;background:#0F4C8F;border:none;cursor:pointer;text-decoration:none;display:inline-block}}</style>
+    <style>body{{font-family:Arial;padding:15px;background:#f0f2f5}} .card{{background:white;padding:15px;border-radius:10px;margin-bottom:20px}} table{{width:100%;border-collapse:collapse;background:white;font-size:13px}} th,td{{border:1px solid #ddd;padding:8px}} th{{background:#0F4C8F;color:white}} .btn{{padding:8px 14px;border-radius:5px;color:white;background:#0F4C8F;border:none;cursor:pointer;text-decoration:none;display:inline-block;margin:2px}}</style>
     </head><body>
     <h2>BASE - Filtrado: {len(filtradas)} / Total: {len(chapas_unicas)}</h2>
     <div class='card'>
       <form method='get'>SUP: <select name='supervisor'>{opt_sup}</select> COORD: <select name='coordenador'>{opt_coord}</select>
       <button class='btn'>Filtrar</button> <a href='/base' class='btn' style='background:#666'>Limpar</a>
+      <a href='/exportar/base?supervisor={filtro_sup}&coordenador={filtro_coord}' class='btn' style='background:#10b981'>📥 Exportar Base CSV</a>
       </form>
-      <div style='margin-top:8px;font-size:12px;color:#666'>Clique no número azul em PEND para justificar.</div>
     </div>
     <div class='card' style='overflow:auto'><table><tr><th>SUP</th><th>TOTAL</th><th>FEITOS</th><th>JUST</th><th>PEND</th><th>%</th></tr>{linhas_html}</table></div>
     <div style='text-align:center'><a href='/graficos' class='btn'>GRAFICOS</a> <a href='/admin?senha={ADMIN_SENHA}' class='btn' style='background:#333'>ADMIN</a></div>
     </body></html>"""
-    return html
 
 @app_flask.route('/base/pendentes')
 def base_pendentes():
@@ -327,11 +317,11 @@ def base_pendentes():
     for ch6, dados in chapas_unicas.items():
         if sup_filtro and sup_filtro not in str(dados.get('supervisor','')).upper(): continue
         if ch6 in feitos or ch6 in justificados: continue
-        pendentes.append({'chapa':ch6, 'nome':dados.get('nome',''), 'cargo':dados.get('cargo',''), 'sup':dados.get('supervisor',''), 'coord':dados.get('coordenador','')})
+        pendentes.append({'chapa':ch6, 'nome':dados.get('nome',''), 'cargo':dados.get('cargo',''), 'sup':dados.get('supervisor','')})
     linhas = ""
     for p in pendentes:
-        linhas += f"<tr><td>{p['chapa']}</td><td>{p['nome']}</td><td>{p['cargo']}</td><td><form action='/base/justificar' method='post' style='display:flex;gap:5px'><input type='hidden' name='chapa' value='{p['chapa']}'><input type='hidden' name='supervisor' value='{sup_filtro}'><input name='motivo' placeholder='Férias, Atestado, Demitido...' required style='flex:1'><button class='btn'>Justificar</button></form></td></tr>"
-    return f"<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><style>body{{font-family:Arial;padding:15px;background:#f0f2f5}} .card{{background:white;padding:15px;border-radius:10px;margin-bottom:15px}} table{{width:100%;border-collapse:collapse;font-size:12px;background:white}} th,td{{border:1px solid #ddd;padding:7px}} th{{background:#0F4C8F;color:white}} .btn{{background:#0F4C8F;color:white;border:none;padding:6px 12px;border-radius:5px;cursor:pointer;text-decoration:none}}</style></head><body><h2>PENDENTES - {sup_filtro} - {len(pendentes)}</h2><div class='card'><a href='/base?supervisor={sup_filtro}' class='btn'>Voltar BASE</a> <a href='/base' class='btn' style='background:#666'>Limpar filtro</a></div><div class='card' style='overflow:auto'><table><tr><th>CHAPA</th><th>NOME</th><th>CARGO</th><th>JUSTIFICAR</th></tr>{linhas or '<tr><td colspan=4>Nenhum pendente - todos feitos!</td></tr>'}</table></div></body></html>"
+        linhas += f"<tr><td>{p['chapa']}</td><td>{p['nome']}</td><td>{p['cargo']}</td><td><form action='/base/justificar' method='post' style='display:flex;gap:5px'><input type='hidden' name='chapa' value='{p['chapa']}'><input type='hidden' name='supervisor' value='{sup_filtro}'><input name='motivo' placeholder='Férias, Atestado...' required style='flex:1'><button class='btn'>Justificar</button></form></td></tr>"
+    return f"<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><style>body{{font-family:Arial;padding:15px;background:#f0f2f5}} .card{{background:white;padding:15px;border-radius:10px;margin-bottom:15px}} table{{width:100%;border-collapse:collapse;font-size:12px;background:white}} th,td{{border:1px solid #ddd;padding:7px}} th{{background:#0F4C8F;color:white}} .btn{{background:#0F4C8F;color:white;border:none;padding:6px 12px;border-radius:5px;cursor:pointer;text-decoration:none;display:inline-block}}</style></head><body><h2>PENDENTES - {sup_filtro} - {len(pendentes)}</h2><div class='card'><a href='/base?supervisor={sup_filtro}' class='btn'>Voltar BASE</a> <a href='/exportar/pendentes?supervisor={sup_filtro}' class='btn' style='background:#10b981'>📥 Exportar Pendentes</a></div><div class='card' style='overflow:auto'><table><tr><th>CHAPA</th><th>NOME</th><th>CARGO</th><th>JUSTIFICAR</th></tr>{linhas or '<tr><td colspan=4>Nenhum pendente</td></tr>'}</table></div></body></html>"
 
 @app_flask.route('/base/justificar', methods=['POST'])
 def base_justificar():
@@ -343,6 +333,70 @@ def base_justificar():
         w = csv.writer(f)
         w.writerow([datetime.datetime.now().strftime("%d/%m/%Y %H:%M"), chapa, dados.get('nome',''), dados.get('supervisor',''), dados.get('coordenador',''), motivo])
     return f"<script>alert('Chapa {chapa} justificada!');window.location='/base/pendentes?supervisor={sup_ret}';</script>"
+
+@app_flask.route('/exportar/<tipo>')
+def exportar(tipo):
+    filtro_sup = request.args.get('supervisor','').strip().upper()
+    filtro_coord = request.args.get('coordenador','').strip().upper()
+    filtro_busca = request.args.get('busca','').strip().upper()
+    filtro_item = request.args.get('item','').strip().upper()
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=';')
+    if tipo == 'base':
+        feitos = set()
+        try:
+            with open(ARQ_INS, encoding="utf-8") as f:
+                for r in csv.DictReader(f): feitos.add(str(r.get('chapa','')).zfill(6))
+        except: pass
+        justificados = get_justificados()
+        chapas_unicas = {}
+        for k, v in FUNCIONARIOS.items():
+            ck = str(k).zfill(6)
+            if len(ck)==6 and ck not in chapas_unicas: chapas_unicas[ck]=v
+        writer.writerow(['CHAPA','NOME','CARGO','SUPERVISOR','COORDENADOR','STATUS'])
+        for ch6, dados in chapas_unicas.items():
+            sup = str(dados.get('supervisor','')).upper()
+            coord = str(dados.get('coordenador','')).upper()
+            if filtro_sup and filtro_sup not in sup: continue
+            if filtro_coord and filtro_coord not in coord: continue
+            if ch6 in feitos: status='FEITO'
+            elif ch6 in justificados: status=f"JUSTIFICADO - {justificados[ch6].get('motivo','')}"
+            else: status='PENDENTE'
+            writer.writerow([ch6, dados.get('nome',''), dados.get('cargo',''), dados.get('supervisor',''), dados.get('coordenador',''), status])
+        nome_arq = f"BASE_{filtro_sup or 'GERAL'}_{datetime.datetime.now().strftime('%d%m%Y_%H%M')}.csv"
+    elif tipo == 'pendentes':
+        feitos = set()
+        try:
+            with open(ARQ_INS, encoding="utf-8") as f:
+                for r in csv.DictReader(f): feitos.add(str(r.get('chapa','')).zfill(6))
+        except: pass
+        justificados = get_justificados()
+        chapas_unicas = {}
+        for k, v in FUNCIONARIOS.items():
+            ck = str(k).zfill(6)
+            if len(ck)==6 and ck not in chapas_unicas: chapas_unicas[ck]=v
+        writer.writerow(['CHAPA','NOME','CARGO','SUPERVISOR','COORDENADOR','STATUS'])
+        for ch6, dados in chapas_unicas.items():
+            if filtro_sup and filtro_sup not in str(dados.get('supervisor','')).upper(): continue
+            if ch6 in feitos or ch6 in justificados: continue
+            writer.writerow([ch6, dados.get('nome',''), dados.get('cargo',''), dados.get('supervisor',''), dados.get('coordenador',''), 'PENDENTE'])
+        nome_arq = f"PENDENTES_{filtro_sup or 'GERAL'}_{datetime.datetime.now().strftime('%d%m%Y')}.csv"
+    elif tipo == 'nao_conforme':
+        writer.writerow(['DATA','CHAPA','NOME','SUPERVISOR','COORDENADOR','ITEM','TAMANHO','STATUS'])
+        try:
+            with open(ARQ_INS, encoding="utf-8") as f:
+                for r in csv.DictReader(f):
+                    if 'NÃO CONFORME' not in str(r.get('status','')).upper() and 'NAO CONFORME' not in str(r.get('status','')).upper(): continue
+                    sup = str(r.get('supervisor','')).upper()
+                    if filtro_sup and filtro_sup not in sup: continue
+                    if filtro_item and filtro_item not in str(r.get('item','')).upper(): continue
+                    if filtro_busca and filtro_busca not in str(r.get('chapa','')).upper() and filtro_busca not in str(r.get('nome','')).upper(): continue
+                    writer.writerow([r.get('data',''), r.get('chapa',''), r.get('nome',''), r.get('supervisor',''), r.get('coordenador',''), r.get('item',''), r.get('tamanho',''), r.get('status','')])
+        except: pass
+        nome_arq = f"NAO_CONFORME_{datetime.datetime.now().strftime('%d%m%Y')}.csv"
+    else:
+        return "Tipo invalido", 400
+    return Response(output.getvalue(), mimetype="text/csv; charset=utf-8", headers={"Content-Disposition": f"attachment; filename={nome_arq}"})
 
 @app_flask.route('/admin')
 def admin_panel():
@@ -416,7 +470,7 @@ def graficos():
         barras += f"<div style='margin-bottom:10px'><div style='display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px'><span style='color:#cbd5e1'>{item[:30]}</span><span style='color:white'><b>{perc}%</b> ({qtd})</span></div><div style='background:#1e293b;height:8px;border-radius:10px'><div style='width:{perc}%;background:{cor};height:8px;border-radius:10px'></div></div></div>"
     if not barras:
         barras = f"<div style='display:flex;flex-direction:column;align-items:center;justify-content:center;height:220px'><div style='font-size:42px;font-weight:bold;color:white'>0</div><div style='font-size:10px;color:#94a3b8'>TOTAL NC</div></div>"
-    html = f"""<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>DASHBOARD SUPABASE</title><style>*{{box-sizing:border-box}} body{{margin:0;font-family:Arial;background:#0f172a;color:white;padding:20px}} .top{{display:flex;justify-content:space-between;align-items:center}} .top h1{{margin:0;font-size:30px}} .top h1 span{{color:#a78bfa}} .btn{{background:white;color:#0f172a;border:none;padding:9px 20px;border-radius:20px;font-weight:bold;cursor:pointer;text-decoration:none}} .filtros{{background:#1e293b;padding:15px;border-radius:16px;display:flex;gap:12px;margin:15px 0;flex-wrap:wrap;border:1px solid #334155}} .filtros input, .filtros select{{background:#0f172a;border:1px solid #334155;color:#cbd5e1;padding:11px 14px;border-radius:12px;min-width:220px;flex:1}} .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:15px;margin-bottom:20px}} .card{{padding:18px;border-radius:16px;color:white}} .card p{{margin:0;font-size:10px;opacity:0.8}} .card h2{{margin:8px 0 4px 0;font-size:26px}} .c1{{background:linear-gradient(135deg,#8b5cf6,#6366f1)}} .c2{{background:linear-gradient(135deg,#06b6d4,#3b82f6)}} .c3{{background:linear-gradient(135deg,#f59e0b,#ef4444)}} .c4{{background:linear-gradient(135deg,#10b981,#059669)}} .grid{{display:grid;grid-template-columns:1.2fr 2fr;gap:15px;margin-bottom:15px}} @media(max-width:900px){{.grid{{grid-template-columns:1fr}}}} .box{{background:#1e293b;border-radius:16px;padding:18px;border:1px solid #334155}} .box h3{{margin:0 0 15px 0;font-size:14px}} table{{width:100%;border-collapse:collapse;font-size:12px}} th{{color:#94a3b8;font-size:10px;text-align:left;padding:10px 8px;border-bottom:1px solid #334155}} td{{padding:10px 8px;border-bottom:1px solid #1e293b;color:#cbd5e1}} .grid2{{display:grid;grid-template-columns:1fr 1fr;gap:15px}} @media(max-width:900px){{.grid2{{grid-template-columns:1fr}}}}</style></head><body><div class='top'><div><h1>DASHBOARD <span>SUPABASE</span></h1><div style='color:#94a3b8;font-size:13px'>Total NC: <b style='color:white'>{total_nc}</b></div></div><a class='btn' href='/graficos'>Atualizar</a></div><form method='get' class='filtros'><input name='busca' value='{filtro_busca}' placeholder='Chapa ou Nome'><select name='supervisor'><option value=''>Todos Supervisores</option>{options_sup}</select><select name='coordenador'><option value=''>Todos Coordenadores</option>{options_coord}</select><select name='item'><option value=''>Todos Itens</option>{options_item}</select><button class='btn' style='background:#8b5cf6;color:white'>Filtrar</button><a href='/graficos' style='color:#94a3b8;padding:10px;text-decoration:none'>Limpar</a></form><div class='cards'><div class='card c1'><p>TOTAL NC</p><h2>{total_nc}</h2><small>{len(cont_item)} itens</small></div><div class='card c2'><p>ITEM CRÍTICO</p><h2 style='font-size:15px'>{item_critico[:26]}</h2><small>{perc_critico}%</small></div><div class='card c3'><p>SUPERVISOR +NC</p><h2 style='font-size:14px'>{sup_critico[:22]}</h2><small>{qtd_sup_critico}</small></div><div class='card c4'><p>TAMANHO +FALTA</p><h2 style='font-size:15px'>{tam_critico or '-'}</h2><small>{qtd_tam_critico}</small></div></div><div class='grid'><div class='box'><h3>% por Item (Colorido)</h3>{barras}</div><div class='box'><h3>Item | Tamanho | Qtd | Total Item | %</h3><div style='overflow:auto;max-height:360px'><table><tr><th>ITEM</th><th>TAMANHO</th><th>QTD</th><th>TOTAL ITEM</th><th>%</th></tr>{linhas_tabela}<tr style='background:#0f172a;font-weight:bold'><td colspan=2 style='text-align:center'>TOTAL</td><td style='text-align:center'>{total_nc}</td><td style='text-align:center'>{total_nc}</td><td style='text-align:center'>100%</td></tr></table></div></div></div><div class='grid2'><div class='box'><h3>NC por Supervisor - SOMA</h3><table><tr><th>SUPERVISOR</th><th>QTD</th></tr>{tabela_sup_soma}</table></div><div class='box'><h3>Ranking Itens</h3><table><tr><th>ITEM</th><th>QTD</th><th>%</th></tr>{tabela_ranking}</table></div></div><div style='margin-top:20px;text-align:center'><a href='/base' style='color:#a78bfa;margin-right:20px'>BASE</a><a href='/admin?senha={ADMIN_SENHA}' style='color:#94a3b8'>ADMIN</a></div></body></html>"""
+    html = f"""<html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'><title>DASHBOARD SUPABASE</title><style>*{{box-sizing:border-box}} body{{margin:0;font-family:Arial;background:#0f172a;color:white;padding:20px}} .top{{display:flex;justify-content:space-between;align-items:center}} .top h1{{margin:0;font-size:30px}} .top h1 span{{color:#a78bfa}} .btn{{background:white;color:#0f172a;border:none;padding:9px 20px;border-radius:20px;font-weight:bold;cursor:pointer;text-decoration:none;display:inline-block}} .filtros{{background:#1e293b;padding:15px;border-radius:16px;display:flex;gap:12px;margin:15px 0;flex-wrap:wrap;border:1px solid #334155}} .filtros input, .filtros select{{background:#0f172a;border:1px solid #334155;color:#cbd5e1;padding:11px 14px;border-radius:12px;min-width:220px;flex:1}} .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:15px;margin-bottom:20px}} .card{{padding:18px;border-radius:16px;color:white}} .card p{{margin:0;font-size:10px;opacity:0.8}} .card h2{{margin:8px 0 4px 0;font-size:26px}} .c1{{background:linear-gradient(135deg,#8b5cf6,#6366f1)}} .c2{{background:linear-gradient(135deg,#06b6d4,#3b82f6)}} .c3{{background:linear-gradient(135deg,#f59e0b,#ef4444)}} .c4{{background:linear-gradient(135deg,#10b981,#059669)}} .grid{{display:grid;grid-template-columns:1.2fr 2fr;gap:15px;margin-bottom:15px}} @media(max-width:900px){{.grid{{grid-template-columns:1fr}}}} .box{{background:#1e293b;border-radius:16px;padding:18px;border:1px solid #334155}} .box h3{{margin:0 0 15px 0;font-size:14px}} table{{width:100%;border-collapse:collapse;font-size:12px}} th{{color:#94a3b8;font-size:10px;text-align:left;padding:10px 8px;border-bottom:1px solid #334155}} td{{padding:10px 8px;border-bottom:1px solid #1e293b;color:#cbd5e1}} .grid2{{display:grid;grid-template-columns:1fr 1fr;gap:15px}} @media(max-width:900px){{.grid2{{grid-template-columns:1fr}}}}</style></head><body><div class='top'><div><h1>DASHBOARD <span>SUPABASE</span></h1><div style='color:#94a3b8;font-size:13px'>Total NC: <b style='color:white'>{total_nc}</b></div></div><a class='btn' href='/graficos'>Atualizar</a></div><form method='get' class='filtros'><input name='busca' value='{filtro_busca}' placeholder='Chapa ou Nome'><select name='supervisor'><option value=''>Todos Supervisores</option>{options_sup}</select><select name='coordenador'><option value=''>Todos Coordenadores</option>{options_coord}</select><select name='item'><option value=''>Todos Itens</option>{options_item}</select><button class='btn' style='background:#8b5cf6;color:white'>Filtrar</button><a href='/graficos' style='color:#94a3b8;padding:10px;text-decoration:none'>Limpar</a><a href='/exportar/nao_conforme?supervisor={filtro_sup}&coordenador={filtro_coord}&item={filtro_item}&busca={filtro_busca}' style='background:#10b981;color:white;padding:11px 18px;border-radius:12px;text-decoration:none;font-weight:bold;margin-left:auto'>📥 Exportar NC</a></form><div class='cards'><div class='card c1'><p>TOTAL NC</p><h2>{total_nc}</h2><small>{len(cont_item)} itens</small></div><div class='card c2'><p>ITEM CRÍTICO</p><h2 style='font-size:15px'>{item_critico[:26]}</h2><small>{perc_critico}%</small></div><div class='card c3'><p>SUPERVISOR +NC</p><h2 style='font-size:14px'>{sup_critico[:22]}</h2><small>{qtd_sup_critico}</small></div><div class='card c4'><p>TAMANHO +FALTA</p><h2 style='font-size:15px'>{tam_critico or '-'}</h2><small>{qtd_tam_critico}</small></div></div><div class='grid'><div class='box'><h3>% por Item (Colorido)</h3>{barras}</div><div class='box'><h3>Item | Tamanho | Qtd | Total Item | %</h3><div style='overflow:auto;max-height:360px'><table><tr><th>ITEM</th><th>TAMANHO</th><th>QTD</th><th>TOTAL ITEM</th><th>%</th></tr>{linhas_tabela}<tr style='background:#0f172a;font-weight:bold'><td colspan=2 style='text-align:center'>TOTAL</td><td style='text-align:center'>{total_nc}</td><td style='text-align:center'>{total_nc}</td><td style='text-align:center'>100%</td></tr></table></div></div></div><div class='grid2'><div class='box'><h3>NC por Supervisor - SOMA</h3><table><tr><th>SUPERVISOR</th><th>QTD</th></tr>{tabela_sup_soma}</table></div><div class='box'><h3>Ranking Itens</h3><table><tr><th>ITEM</th><th>QTD</th><th>%</th></tr>{tabela_ranking}</table></div></div><div style='margin-top:20px;text-align:center'><a href='/base' style='color:#a78bfa;margin-right:20px'>BASE</a><a href='/exportar/base' style='color:#10b981;margin-right:20px'>📥 Exportar Base Geral</a><a href='/admin?senha={ADMIN_SENHA}' style='color:#94a3b8'>ADMIN</a></div></body></html>"""
     return html
 
 # ===== TELEGRAM =====
@@ -638,7 +692,7 @@ def run_flask():
         await application.initialize()
         await application.start()
         await application.bot.set_webhook(f"{WEBHOOK_URL}/webhook", drop_pending_updates=True)
-        print(f"✅ WEBHOOK SETADO: {WEBHOOK_URL}/webhook - LOOP FIX + BASE FIX")
+        print(f"✅ WEBHOOK SETADO: {WEBHOOK_URL}/webhook - EXPORTAR OK")
     fut = asyncio.run_coroutine_threadsafe(init_bot(), BOT_LOOP)
     fut.result(timeout=30)
     app_flask.run(host='0.0.0.0', port=int(os.environ.get("PORT",10000)))
